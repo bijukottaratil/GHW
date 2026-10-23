@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="description" content="Live world map of earthquakes, tropical cyclones, wildfires, volcanoes and civil unrest, with catastrophe-modeler event response and an event history with loss estimates.">
+<title>Global Hazard Watch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+/* Layout: watch-floor bulletin — status strip, world map as the hero, then ranked alerts beside the full event log */
+:root{
+  --paper:#eef1f2; --panel:#f8fafa; --ink:#16222a; --muted:#56666f; --line:#cfd8dc; --land:#d5dcdf; --sea:#e4eaec; --grat:#d9e0e3;
+  --quake:#a86a12; --storm:#4c4fd0; --fire:#d24b0c; --volcano:#a3123f; --unrest:#1f7a80; --heat:#16222a;
+  --a-red:#c92a2a; --a-orange:#e06410; --a-yellow:#c99a06; --a-green:#2b8a3e;
+  --display:"Big Shoulders Display","Arial Narrow",Impact,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0f161b; --panel:#151f26; --ink:#e2e9ec; --muted:#93a3ab; --line:#26343d; --land:#26343c; --sea:#121b21; --grat:#1b262d;
+  --quake:#e0a43c; --storm:#8d90ff; --fire:#ff7a3d; --volcano:#ff5a86; --unrest:#4fc3ca; --heat:#e2e9ec;
+  --a-red:#ff6b6b; --a-orange:#ff9343; --a-yellow:#f2c94c; --a-green:#5ccf74; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0f161b; --panel:#151f26; --ink:#e2e9ec; --muted:#93a3ab; --line:#26343d; --land:#26343c; --sea:#121b21; --grat:#1b262d;
+  --quake:#e0a43c; --storm:#8d90ff; --fire:#ff7a3d; --volcano:#ff5a86; --unrest:#4fc3ca; --heat:#e2e9ec;
+  --a-red:#ff6b6b; --a-orange:#ff9343; --a-yellow:#f2c94c; --a-green:#5ccf74; color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font:15px/1.5 var(--body);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 40px}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:22px}
+a{color:inherit}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+
+header.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px 24px;padding-top:22px;border-bottom:3px solid var(--ink);padding-bottom:12px}
+h1{font:800 clamp(34px,7vw,56px)/.9 var(--display);letter-spacing:.01em;text-transform:uppercase;margin:0;text-wrap:balance}
+.stamp{font:12px/1.5 var(--mono);color:var(--muted);text-align:right}
+.stamp b{color:var(--ink);font-weight:500}
+.live{display:inline-flex;align-items:center;gap:6px;text-transform:uppercase;letter-spacing:.08em}
+.live i{width:8px;height:8px;border-radius:50%;background:var(--a-red);display:inline-block;animation:blink 2s infinite}
+@keyframes blink{50%{opacity:.25}}
+
+.tally{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;border:1px solid var(--line);background:var(--panel)}
+.tally div{padding:10px 14px;border-left:1px solid var(--line);min-width:0}
+.tally div:first-child{border-left:0}
+.tally .k{font:500 11px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);display:flex;align-items:center;gap:6px}
+.tally .v{font:800 34px/1 var(--display);font-variant-numeric:tabular-nums;margin-top:6px}
+.sw{width:9px;height:9px;display:inline-block;flex:none}
+
+.mapbox{position:relative;background:var(--sea);border:1px solid var(--line);overflow:hidden}
+.mapbox svg{display:block;width:100%;height:auto}
+.land{fill:var(--land);stroke:none}
+.grat{fill:none;stroke:var(--grat);stroke-width:.6}
+.sphere{fill:var(--sea);stroke:var(--line)}
+.mk{cursor:pointer;transition:opacity .2s}
+.mk circle.dot{stroke:var(--panel);stroke-width:1}
+.mk.dim{opacity:.12;pointer-events:none}
+.mk.sel circle.dot{stroke:var(--ink);stroke-width:2.5}
+.ring{fill:none;stroke-width:1.6;transform-box:fill-box;transform-origin:center;animation:pulse 2.4s ease-out infinite}
+@keyframes pulse{0%{transform:scale(1);opacity:.9}100%{transform:scale(3.2);opacity:0}}
+@media (prefers-reduced-motion:reduce){.ring,.live i{animation:none}}
+.legend{position:absolute;left:10px;bottom:8px;display:flex;flex-wrap:wrap;gap:4px 12px;font:11px/1.4 var(--mono);color:var(--muted);background:color-mix(in srgb,var(--panel) 85%,transparent);padding:4px 8px}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.legend .sw{border-radius:50%}
+
+.detail{border:1px solid var(--line);border-top:4px solid var(--ink);background:var(--panel);padding:14px 16px;display:grid;gap:6px}
+.detail .eyebrow{font:500 11px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.detail h2{font:700 26px/1.05 var(--display);text-transform:uppercase;margin:0;letter-spacing:.01em}
+.detail p{margin:0;max-width:65ch}
+.detail .meta{font:13px/1.5 var(--mono);color:var(--muted)}
+
+.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.chip{border:1px solid var(--line);background:var(--panel);padding:6px 12px;border-radius:2px;cursor:pointer;font-size:13px;display:inline-flex;gap:7px;align-items:center}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.chip .n{font:12px var(--mono);opacity:.7}
+.sep{flex:1}
+.toggle{display:inline-flex;gap:8px;align-items:center;font-size:13px;color:var(--muted);cursor:pointer}
+
+.cols{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:28px;align-items:start}
+@media (max-width:860px){.cols{grid-template-columns:minmax(0,1fr)}.tally{grid-template-columns:repeat(2,minmax(0,1fr))}.tally div:nth-child(3){border-left:0}.tally div:nth-child(n+3){border-top:1px solid var(--line)}}
+h3{font:700 20px/1 var(--display);text-transform:uppercase;letter-spacing:.04em;margin:0 0 10px;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+h3 small{font:12px var(--mono);color:var(--muted);text-transform:none;letter-spacing:0}
+
+.list{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
+.row{display:grid;grid-template-columns:6px minmax(0,1fr) auto;gap:12px;align-items:start;padding:10px 4px 10px 0;border-bottom:1px solid var(--line);cursor:pointer;width:100%;text-align:left;background:none;border-left:0;border-right:0;border-top:0}
+.row:hover{background:color-mix(in srgb,var(--panel) 70%,transparent)}
+.row.sel{background:var(--panel)}
+.row .bar{align-self:stretch;width:6px}
+.row .t{font-weight:600;line-height:1.3;overflow-wrap:anywhere}
+.row .p{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.row .r{text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.row .m{font:500 13px var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.row .when{font:11px var(--mono);color:var(--muted);white-space:nowrap}
+.pill{font:500 10px/1 var(--mono);text-transform:uppercase;letter-spacing:.08em;padding:3px 6px;border:1px solid currentColor;white-space:nowrap}
+.pill.red{color:var(--a-red)}.pill.orange{color:var(--a-orange)}.pill.yellow{color:var(--a-yellow)}.pill.green{color:var(--a-green)}
+.empty{padding:18px 0;color:var(--muted)}
+.more{margin-top:10px}
+
+.mx-wrap{overflow-x:auto;border:1px solid var(--line);background:var(--panel)}
+table.mx{border-collapse:collapse;width:100%;min-width:640px;font-variant-numeric:tabular-nums}
+.mx th,.mx td{padding:0;border-bottom:1px solid var(--line);border-left:1px solid var(--line);text-align:center}
+.mx thead th{font:500 11px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--muted);padding:9px 6px;vertical-align:bottom}
+.mx th[scope=row]{text-align:left;font:600 13px var(--body);padding:0 12px;white-space:nowrap;border-left:0}
+.mx th[scope=row] .sw{border-radius:50%;margin-right:7px}
+.mx tbody tr:last-child>*{border-bottom:0}
+.mx tfoot td,.mx tfoot th{border-top:2px solid var(--ink);border-bottom:0;font:500 12px var(--mono)}
+.mx tfoot th{text-align:left;padding:8px 12px;border-left:0}
+.cell{width:100%;min-height:44px;border:0;background:color-mix(in srgb,var(--heat) calc(var(--w,0)*1%),transparent);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:6px 4px;font:600 16px var(--mono)}
+.cell[disabled]{cursor:default;color:var(--muted);font-weight:400;opacity:.45}
+.cell.hot{color:var(--paper)}
+.cell .al{font:500 9px/1 var(--mono);text-transform:uppercase;letter-spacing:.06em;display:flex;gap:3px}
+.cell .al i{width:7px;height:7px;display:inline-block}
+.cell[aria-pressed="true"]{outline:3px solid var(--a-orange);outline-offset:-3px}
+.mxnote{font-size:12px;color:var(--muted);margin:8px 0 0}
+
+.mods{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px}
+@media (max-width:860px){.mods{grid-template-columns:minmax(0,1fr)}}
+.org{display:flex;justify-content:space-between;align-items:baseline;gap:8px;border-bottom:2px solid var(--ink);padding-bottom:6px;margin-bottom:0}
+.org b{font:700 18px var(--display);text-transform:uppercase;letter-spacing:.04em}
+.org a{font:12px var(--mono);color:var(--muted)}
+.st{font:500 10px/1 var(--mono);text-transform:uppercase;letter-spacing:.08em;padding:3px 6px;white-space:nowrap}
+.st.Active{background:var(--ink);color:var(--paper)}
+.st.Monitoring{border:1px solid var(--ink)}
+.st.Closed{color:var(--muted);border:1px dashed var(--muted)}
+.row .nt{font-size:13px;margin-top:3px;overflow-wrap:anywhere}
+.mk .modr{fill:none;stroke:var(--ink);stroke-width:1.4;stroke-dasharray:2 2}
+.cover{border-top:1px dashed var(--line);padding-top:8px;display:grid;gap:6px}
+.cover div{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;font-size:14px}
+.cover b{font:600 13px var(--mono)}
+.contchips{display:flex;flex-wrap:wrap;gap:8px}
+
+.view{display:flex;flex-direction:column;gap:22px}
+.tabs{display:flex;gap:0;border-bottom:1px solid var(--line);margin-top:-10px}
+.tabs button{border:0;background:none;padding:10px 16px 9px;cursor:pointer;font:700 17px var(--display);text-transform:uppercase;letter-spacing:.05em;color:var(--muted);border-bottom:3px solid transparent;margin-bottom:-1px;display:inline-flex;gap:8px;align-items:baseline}
+.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--a-orange)}
+.tabs .n{font:500 12px var(--mono);letter-spacing:0}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+.htally{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--line);background:var(--panel)}
+.htally div{padding:10px 14px;border-left:1px solid var(--line);min-width:0}
+.htally div:first-child{border-left:0}
+.htally .k{font:500 11px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.htally .v{font:800 28px/1.05 var(--display);margin-top:6px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.htally .s{font-size:12px;color:var(--muted)}
+@media (max-width:860px){.htally{grid-template-columns:repeat(2,minmax(0,1fr))}.htally div:nth-child(3){border-left:0}.htally div:nth-child(n+3){border-top:1px solid var(--line)}}
+.hctl{display:flex;flex-wrap:wrap;gap:8px}
+.hctl input,.hctl select{font:inherit;font-size:14px;color:var(--ink);background:var(--panel);border:1px solid var(--line);padding:8px 10px;border-radius:2px;min-width:0}
+.srch{flex:1 1 220px;display:flex}
+.srch input{width:100%}
+.losses{display:flex;flex-wrap:wrap;gap:6px;margin-top:5px}
+.loss{font:500 11px/1.3 var(--mono);padding:2px 6px;background:color-mix(in srgb,var(--ink) 8%,transparent)}
+.loss b{font-weight:500;color:var(--muted);margin-right:4px}
+
+.sheet{position:fixed;inset:0;z-index:20;display:flex;justify-content:flex-end}
+.scrim{position:absolute;inset:0;background:color-mix(in srgb,var(--ink) 45%,transparent)}
+.panel{position:relative;background:var(--paper);width:min(560px,100%);height:100%;overflow-y:auto;border-left:3px solid var(--ink);
+  padding:calc(18px + env(safe-area-inset-top,0px)) max(20px,env(safe-area-inset-right,0px)) calc(30px + env(safe-area-inset-bottom,0px)) 20px;display:flex;flex-direction:column;gap:16px;outline:none}
+.panel .close{position:sticky;top:0;align-self:flex-end;border:1px solid var(--line);background:var(--panel);padding:6px 12px;cursor:pointer;font-size:13px;z-index:1}
+.panel h2{font:800 32px/1 var(--display);text-transform:uppercase;margin:0;text-wrap:balance}
+.panel .eyebrow{font:500 11px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.panel p{margin:0;max-width:65ch}
+.facts{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 16px;margin:0;font-size:14px}
+.facts dt{font:500 11px/1.9 var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.facts dd{margin:0}
+.lossbox{border:1px solid var(--line);background:var(--panel)}
+.lossbox h4{margin:0;padding:10px 14px;font:700 16px var(--display);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--line);display:flex;justify-content:space-between}
+.lossbox ul{list-style:none;margin:0;padding:0}
+.lossbox li{padding:10px 14px;border-top:1px solid var(--line);display:grid;gap:2px}
+.lossbox li:first-child{border-top:0}
+.lossbox .amt{font:600 16px var(--body)}
+.lossbox .by{font:12px var(--mono);color:var(--muted)}
+.panel .links{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:14px}
+
+footer{border-top:3px solid var(--ink);padding-top:12px;font-size:13px;color:var(--muted);display:grid;gap:10px}
+.srcs{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 20px}
+.srcs div{min-width:0}
+.srcs b{color:var(--ink);font-weight:600}
+.srcs .asof{font:11px var(--mono)}
+.note{max-width:75ch}
+</style>
+
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1>Global Hazard<br>Watch</h1>
+    <div class="stamp">
+      <div class="live"><i></i>Tracking</div>
+      <div>Compiled <b id="upd">—</b></div>
+      <div id="updAbs"></div>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Views">
+    <button role="tab" id="tab-live" aria-selected="true" aria-controls="v-live">Live now</button>
+    <button role="tab" id="tab-history" aria-selected="false" aria-controls="v-history">Event history <span class="n" id="hCount"></span></button>
+  </nav>
+
+  <div id="v-live" role="tabpanel" aria-labelledby="tab-live" class="view">
+
+  <section class="tally" aria-label="Summary">
+    <div><span class="k"><span class="sw" style="background:var(--a-red)"></span>Red alerts</span><div class="v" id="cRed">0</div></div>
+    <div><span class="k"><span class="sw" style="background:var(--a-orange)"></span>Orange alerts</span><div class="v" id="cOrange">0</div></div>
+    <div><span class="k">M6+ quakes · 14 d</span><div class="v" id="cM6">0</div></div>
+    <div><span class="k">Events tracked</span><div class="v" id="cAll">0</div></div>
+  </section>
+
+  <div class="mapbox">
+    <svg id="map" viewBox="0 0 960 470" role="img" aria-label="World map of current hazard events"></svg>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--quake)"></i>Earthquake</span>
+      <span><i class="sw" style="background:var(--storm)"></i>Cyclone</span>
+      <span><i class="sw" style="background:var(--fire)"></i>Wildfire</span>
+      <span><i class="sw" style="background:var(--volcano)"></i>Volcano</span>
+      <span><i class="sw" style="background:var(--unrest)"></i>Civil unrest</span>
+      <span><i class="sw" style="background:none;border:1.4px dashed var(--ink)"></i>Modeler event</span>
+    </div>
+  </div>
+
+  <article class="detail" id="detail" aria-live="polite"></article>
+
+  <section>
+    <h3>Perils by continent <small>tap a cell to filter</small></h3>
+    <div class="mx-wrap"><table class="mx" id="mx"></table></div>
+    <p class="mxnote">Shade shows event count. Coloured squares mark the highest alert in the cell. Open ocean covers mid-ocean ridges and the Southern Ocean.</p>
+  </section>
+
+  <section>
+    <h3>Modeler event response <small>Moody's RMS · Verisk</small></h3>
+    <div class="mods" id="mods"></div>
+  </section>
+
+  <div class="controls" role="group" aria-label="Filter by peril">
+    <span id="chips" style="display:contents"></span>
+    <span class="sep"></span>
+    <label class="toggle"><input type="checkbox" id="alertOnly"> Orange &amp; red only</label>
+  </div>
+  <div class="contchips" id="conts" role="group" aria-label="Filter by continent"></div>
+
+  <div class="cols">
+    <section>
+      <h3>Highest alerts <small>by severity</small></h3>
+      <ul class="list" id="top"></ul>
+    </section>
+    <section>
+      <h3>Event log <small id="logCount"></small></h3>
+      <ul class="list" id="log"></ul>
+      <button class="chip more" id="more" hidden>Show all</button>
+    </section>
+  </div>
+
+  </div>
+
+  <div id="v-history" role="tabpanel" aria-labelledby="tab-history" class="view" hidden>
+    <section class="htally" id="hTally" aria-label="Archive summary"></section>
+    <div class="hctl">
+      <label class="srch"><span class="vh">Search events</span><input id="hq" type="search" placeholder="Search name, country, peril…"></label>
+      <select id="hPeril" aria-label="Peril"><option value="all">All perils</option></select>
+      <select id="hCont" aria-label="Continent"><option value="all">All continents</option></select>
+      <select id="hSort" aria-label="Sort"><option value="date">Newest first</option><option value="ins">Largest insured loss</option><option value="econ">Largest economic loss</option><option value="deaths">Most deaths</option></select>
+    </div>
+    <ul class="list hlist" id="hList"></ul>
+    <p class="mxnote">The archive keeps every event that reached an orange or red alert, M6+ earthquakes, named storms, events covered by Moody's RMS or Verisk, and any event with a published loss figure. Loss figures are quoted from the named estimator and updated hourly as new estimates appear.</p>
+  </div>
+
+  <footer>
+    <div class="srcs" id="srcs"></div>
+    <p class="note">Positions and alert levels come straight from each agency's feed. GDACS and USGS PAGER alerts estimate humanitarian impact (green → red). Volcano entries come from the most recent weekly report, so they lag other feeds. Follow official local warnings for any decision about safety.</p>
+  </footer>
+</div>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="scrim" id="scrim"></div>
+  <article class="panel" role="dialog" aria-modal="true" aria-labelledby="sTitle" id="sPanel" tabindex="-1"></article>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+<script>
+const TYPES={quake:{label:"Earthquakes",one:"Earthquake",row:"Earthquake",c:"--quake"},storm:{label:"Cyclones",one:"Tropical cyclone",row:"Tropical cyclone",c:"--storm"},fire:{label:"Wildfires",one:"Wildfire",row:"Wildfire",c:"--fire"},volcano:{label:"Volcanoes",one:"Volcano",row:"Volcano",c:"--volcano"},unrest:{label:"Civil unrest",one:"Civil unrest (SRCC)",row:"Civil unrest",c:"--unrest"}};
+const CONTS={asia:"Asia",oceania:"Oceania",namerica:"N. & C. America",samerica:"S. America",europe:"Europe",africa:"Africa",ocean:"Open ocean"};
+const RANK={red:4,orange:3,yellow:2,green:1};
+const state={data:null,type:"all",cont:"all",alertOnly:false,sel:null,showAll:false};
+const $=id=>document.getElementById(id);
+const proj=d3.geoNaturalEarth1().fitExtent([[6,6],[954,464]],{type:"Sphere"});
+const path=d3.geoPath(proj);
+const svg=d3.select("#map");
+let gMarks;
+
+function continent(la,lo){
+  if(la<-50||(Math.abs(la)<3&&lo>-35&&lo<-10)||(la>52&&la<66&&lo>-45&&lo<-28))return"ocean";
+  if(lo<=-150&&la<14)return"oceania";
+  if(la>14&&la<26&&lo>-165&&lo<-150)return"namerica";
+  if(lo<-150&&la>45)return"namerica";
+  if(lo<-30&&lo>-170)return(la>7||(la>4&&lo>-84&&lo<-77))?"namerica":"samerica";
+  if(lo>=-30&&lo<-10&&la>27)return"europe";
+  if(la>=35&&lo>=-30&&lo<45)return la<37.5&&lo>27?"asia":"europe";
+  if(lo>=-20&&lo<52&&la<35&&la>-40)return(lo>34&&la>12)?"asia":"africa";
+  if(lo>=110&&la<-10)return"oceania";
+  if(lo>=130&&la<25)return(lo<141&&la>-11)?"asia":"oceania";
+  return"asia";
+}
+function ago(iso){const s=(Date.now()-new Date(iso))/1000;if(s<0)return"just now";const m=s/60,h=m/60,d=h/24;
+  if(m<60)return Math.round(m)+" min ago";if(h<36)return Math.round(h)+" h ago";return Math.round(d)+" days ago"}
+const fmt=new Intl.DateTimeFormat(undefined,{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
+const fmtDay=new Intl.DateTimeFormat(undefined,{day:"numeric",month:"short",year:"numeric"});
+const isDay=iso=>iso.endsWith("T00:00:00Z")||iso.length===10;
+const when=e=>e.t==="volcano"?"week to "+fmtDay.format(new Date(e.d)):(isDay(e.d)?fmtDay.format(new Date(e.d)):fmt.format(new Date(e.d)));
+const score=e=>(RANK[e.a]||0)*10+e.v;
+const col=t=>`var(${TYPES[t].c})`;
+const key=e=>e.u+"|"+e.d+"|"+e.la;
+
+async function drawBase(){
+  svg.append("path").datum({type:"Sphere"}).attr("class","sphere").attr("d",path);
+  svg.append("path").datum(d3.geoGraticule10()).attr("class","grat").attr("d",path);
+  try{const w=await (await fetch("land.json")).json();
+    svg.append("path").datum(topojson.feature(w,w.objects.land)).attr("class","land").attr("d",path);}catch(e){}
+  gMarks=svg.append("g");
+}
+
+function visible(e){return (state.type==="all"||e.t===state.type)&&(state.cont==="all"||e.c===state.cont)&&(!state.alertOnly||RANK[e.a]>=3)}
+
+function drawMarks(){
+  const ev=state.data.events.filter(e=>e.la!=null&&e.lo!=null).sort((a,b)=>a.v-b.v);
+  const g=gMarks.selectAll("g.mk").data(ev,key).join(enter=>{
+    const g=enter.append("g").attr("class","mk").attr("tabindex",0).attr("role","button");
+    g.each(function(e){const s=d3.select(this),r=3+e.v*1.9;
+      if(RANK[e.a]>=3)s.append("circle").attr("class","ring").attr("r",r).attr("stroke",`var(--a-${e.a})`);
+      s.append("circle").attr("class","dot").attr("r",r).attr("fill",col(e.t)).attr("fill-opacity",.78);
+      if(e.mr){const q=r+4;s.append("rect").attr("class","modr").attr("x",-q).attr("y",-q).attr("width",q*2).attr("height",q*2).attr("transform","rotate(45)")}
+      s.append("title").text(`${e.n} — ${e.p}`)});
+    g.on("click",(_,e)=>select(e,true)).on("keydown",(ev,e)=>{if(ev.key==="Enter"||ev.key===" "){ev.preventDefault();select(e,true)}});
+    return g});
+  g.attr("transform",e=>{const p=proj([e.lo,e.la]);return`translate(${p[0]},${p[1]})`})
+   .classed("dim",e=>!visible(e)).classed("sel",e=>e===state.sel);
+  gMarks.selectAll("g.mk.sel").raise();
+}
+
+function makeRow(e,opts={}){
+  const li=document.createElement("li"),b=document.createElement("button");
+  b.type="button";b.className="row"+(e===state.sel?" sel":"");
+  const pill=opts.st?`<span class="st ${opts.st}">${opts.st}</span>`:(e.a?`<span class="pill ${e.a}">${e.a}</span>`:"");
+  b.innerHTML=`<span class="bar" style="background:${col(e.t)}"></span><span><div class="t"></div><div class="p"></div>${opts.nt?'<div class="nt"></div>':""}</span><span class="r"><span class="m"></span>${pill}<span class="when"></span></span>`;
+  b.querySelector(".t").textContent=e.n;b.querySelector(".p").textContent=e.p+" · "+CONTS[e.c];
+  if(opts.nt)b.querySelector(".nt").textContent=opts.nt;
+  b.querySelector(".m").textContent=e.m;
+  b.querySelector(".when").textContent=opts.when||(e.t==="volcano"?"weekly report":ago(e.d));
+  b.onclick=()=>select(e,false);li.appendChild(b);return li;
+}
+function fillList(el,items){
+  el.innerHTML="";
+  if(!items.length){el.innerHTML=`<li class="empty">No events match these filters.</li>`;return}
+  for(const e of items)el.appendChild(makeRow(e));
+}
+
+function renderDetail(){
+  const e=state.sel,el=$("detail");if(!e)return;
+  const pill=e.a?`<span class="pill ${e.a}">${e.a} alert</span>`:"";
+  el.innerHTML=`<div class="eyebrow"><span class="sw" style="background:${col(e.t)}"></span><span class="ty"></span>${pill}</div><h2></h2><p class="pl"></p><p class="x"></p><div class="meta"></div><a class="src" target="_blank" rel="noopener"></a>`;
+  el.querySelector(".ty").textContent=TYPES[e.t].one+" · "+e.m+" · "+CONTS[e.c];
+  el.querySelector("h2").textContent=e.n;el.querySelector(".pl").textContent=e.p;el.querySelector(".x").textContent=e.x;
+  el.querySelector(".meta").textContent=`${when(e)} · ${e.la!=null?e.la.toFixed(2)+"°, "+e.lo.toFixed(2)+"°":"—"} · ${e.s}`;
+  const a=el.querySelector(".src");a.href=e.u;a.textContent="Open source report →";
+  const hm=histMatch(e);if(hm){const b=document.createElement("button");b.type="button";b.className="chip";b.style.justifySelf="start";
+    b.textContent="Loss summary in history →";b.onclick=()=>openSheet(hm,b);el.appendChild(b)}
+  if(e.mr){const c=document.createElement("div");c.className="cover";
+    for(const m of e.mr){const d=document.createElement("div");
+      d.innerHTML=`<b></b><span class="st ${m.st}">${m.st}</span><span class="n"></span><a target="_blank" rel="noopener">View</a>`;
+      d.querySelector("b").textContent=m.o;d.querySelector(".n").textContent=m.nt;d.querySelector("a").href=m.u;c.appendChild(d)}
+    el.insertBefore(c,a)}
+}
+
+function select(e,fromMap){state.sel=e;renderDetail();drawMarks();renderLists();renderMods();
+  if(fromMap)$("detail").scrollIntoView({behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth",block:"nearest"})}
+
+function setFilter(t,c){state.type=t;state.cont=c;state.showAll=false;
+  try{localStorage.setItem("hw-f",JSON.stringify({t,c}))}catch(_){}
+  renderChips();renderMatrix();drawMarks();renderLists()}
+
+function chip(id,label,n,pressed,sw,fn){const b=document.createElement("button");b.className="chip";b.type="button";b.id=id;
+  b.setAttribute("aria-pressed",pressed);b.innerHTML=(sw?`<span class="sw" style="background:${sw};border-radius:50%"></span>`:"")+`<span class="l"></span><span class="n">${n}</span>`;
+  b.querySelector(".l").textContent=label;b.onclick=fn;return b}
+
+function renderChips(){
+  const ev=state.data.events,c=$("chips"),k=$("conts");c.innerHTML="";k.innerHTML="";
+  const inC=e=>state.cont==="all"||e.c===state.cont, inT=e=>state.type==="all"||e.t===state.type;
+  c.appendChild(chip("f-all","All perils",ev.filter(inC).length,state.type==="all",null,()=>setFilter("all",state.cont)));
+  for(const [t,v] of Object.entries(TYPES))c.appendChild(chip("f-"+t,v.label,ev.filter(e=>e.t===t&&inC(e)).length,state.type===t,col(t),()=>setFilter(t,state.cont)));
+  k.appendChild(chip("c-all","All continents",ev.filter(inT).length,state.cont==="all",null,()=>setFilter(state.type,"all")));
+  for(const [cc,v] of Object.entries(CONTS)){const n=ev.filter(e=>e.c===cc&&inT(e)).length;
+    if(n)k.appendChild(chip("c-"+cc,v,n,state.cont===cc,null,()=>setFilter(state.type,cc)))}
+}
+
+function renderMatrix(){
+  const ev=state.data.events,t=$("mx");
+  const max=Math.max(1,...Object.keys(TYPES).flatMap(p=>Object.keys(CONTS).map(c=>ev.filter(e=>e.t===p&&e.c===c).length)));
+  let h=`<thead><tr><th></th>${Object.values(CONTS).map(c=>`<th scope="col">${c}</th>`).join("")}<th scope="col">Total</th></tr></thead><tbody>`;
+  for(const [p,v] of Object.entries(TYPES)){
+    h+=`<tr><th scope="row"><span class="sw" style="background:${col(p)}"></span>${v.row}</th>`;
+    for(const c of Object.keys(CONTS)){const cell=ev.filter(e=>e.t===p&&e.c===c),n=cell.length;
+      const top=cell.reduce((m,e)=>Math.max(m,RANK[e.a]||0),0),lv=Object.keys(RANK).find(k=>RANK[k]===top);
+      const w=n?Math.round(12+70*Math.sqrt(n/max)):0,on=state.type===p&&state.cont===c;
+      h+=`<td><button class="cell${w>50?" hot":""}" style="--w:${w}" data-p="${p}" data-c="${c}" aria-pressed="${on}" ${n?"":"disabled"} aria-label="${v.row} in ${CONTS[c]}: ${n}">${n||"·"}${lv&&top>=2?`<span class="al"><i style="background:var(--a-${lv})"></i></span>`:""}</button></td>`}
+    h+=`<td><button class="cell" data-p="${p}" data-c="all" aria-pressed="${state.type===p&&state.cont==="all"}">${ev.filter(e=>e.t===p).length}</button></td></tr>`;
+  }
+  h+=`</tbody><tfoot><tr><th>Total</th>${Object.keys(CONTS).map(c=>`<td><button class="cell" data-p="all" data-c="${c}" aria-pressed="${state.type==="all"&&state.cont===c}">${ev.filter(e=>e.c===c).length}</button></td>`).join("")}<td><button class="cell" data-p="all" data-c="all" aria-pressed="${state.type==="all"&&state.cont==="all"}">${ev.length}</button></td></tr></tfoot>`;
+  t.innerHTML=h;
+  t.querySelectorAll("button.cell:not([disabled])").forEach(b=>b.onclick=()=>{
+    const p=b.dataset.p,c=b.dataset.c;if(state.type===p&&state.cont===c)setFilter("all","all");else setFilter(p,c)});
+}
+
+function renderMods(){
+  const box=$("mods");box.innerHTML="";
+  const srcs=Object.fromEntries(state.data.sources.map(s=>[s.name,s]));
+  const orgs=[["Moody's RMS","Moody's RMS Event Response"],["Verisk","Verisk ALERT (formerly AIR)"]];
+  const order={Active:0,Monitoring:1,Closed:2};
+  for(const [o,sn] of orgs){
+    const items=state.data.events.flatMap(e=>(e.mr||[]).filter(m=>m.o===o).map(m=>({e,m})))
+      .sort((a,b)=>order[a.m.st]-order[b.m.st]||new Date(b.e.d)-new Date(a.e.d));
+    const sec=document.createElement("section");
+    sec.innerHTML=`<div class="org"><b></b><a target="_blank" rel="noopener">Source page →</a></div><ul class="list"></ul>`;
+    sec.querySelector("b").textContent=o+" · "+items.filter(i=>i.m.st!=="Closed").length+" open";
+    if(srcs[sn])sec.querySelector("a").href=srcs[sn].url;
+    const ul=sec.querySelector("ul");
+    if(!items.length)ul.innerHTML=`<li class="empty">No events listed.</li>`;
+    for(const {e,m} of items)ul.appendChild(makeRow(e,{st:m.st,nt:m.nt,when:fmtDay.format(new Date(m.d))}));
+    box.appendChild(sec)}
+}
+
+function renderLists(){
+  const ev=state.data.events.filter(visible);
+  fillList($("top"),[...ev].sort((a,b)=>score(b)-score(a)).slice(0,8));
+  const log=[...ev].sort((a,b)=>new Date(b.d)-new Date(a.d));
+  const LIM=25;fillList($("log"),state.showAll?log:log.slice(0,LIM));
+  $("logCount").textContent=`${ev.length} events · newest first`;
+  const m=$("more");m.hidden=state.showAll||log.length<=LIM;m.textContent=`Show all ${log.length}`;
+}
+
+function renderHead(){
+  const d=state.data,ev=d.events;
+  $("upd").textContent=ago(d.updated);$("updAbs").textContent=fmt.format(new Date(d.updated))+" your time";
+  $("cRed").textContent=ev.filter(e=>e.a==="red").length;$("cOrange").textContent=ev.filter(e=>e.a==="orange").length;
+  $("cM6").textContent=ev.filter(e=>e.t==="quake"&&parseFloat(e.m.slice(1))>=6&&(Date.now()-new Date(e.d))<15*864e5).length;
+  $("cAll").textContent=ev.length;
+  $("srcs").innerHTML="";for(const s of d.sources){const div=document.createElement("div");
+    div.innerHTML=`<b></b><div class="c"></div><div class="asof"></div><a target="_blank" rel="noopener">Source site</a>`;
+    div.querySelector("b").textContent=s.name;div.querySelector(".c").textContent=s.covers;
+    div.querySelector(".asof").textContent="Latest entry "+fmt.format(new Date(s.asof));div.querySelector("a").href=s.url;$("srcs").appendChild(div)}
+}
+
+async function load(){
+  try{const r=await fetch("data.json?"+Date.now(),{cache:"no-store"});const d=await r.json();
+    for(const e of d.events){if(!TYPES[e.t])e.t="unrest";e.c=e.c||(e.la!=null?continent(e.la,e.lo):"ocean")}
+    const prev=state.sel;state.data=d;
+    state.sel=(prev&&d.events.find(e=>key(e)===key(prev)))||[...d.events].sort((a,b)=>score(b)-score(a))[0];
+    renderHead();renderChips();renderMatrix();renderMods();drawMarks();renderLists();renderDetail();
+  }catch(e){$("detail").innerHTML=`<p>Event data could not be loaded. Reload the page to try again.</p>`}
+}
+
+/* ---------- History tab ---------- */
+const hist={data:null,q:"",peril:"all",cont:"all",sort:"date"};
+function lossVal(arr){let best=0;
+  for(const x of arr||[]){const s=x.v||"";if(/^(no|not)\b/i.test(s))continue;
+    const m=s.match(/(USD|€|\$)?\s*([\d.,]+)(?:\s*[–-]\s*([\d.,]+))?\s*(billion|bn|million)/i);if(!m)continue;
+    let n=parseFloat((m[3]||m[2]).replace(/,/g,""));n*=/^b/i.test(m[4])?1e9:1e6;if(m[1]==="€")n*=1.1;best=Math.max(best,n)}
+  return best}
+const hasLoss=arr=>(arr||[]).some(x=>!/^(no|not)\b/i.test(x.v||""));
+const deathN=s=>{const m=(s||"").match(/([\d,]+)\s*(dead|death)/i);return m?parseInt(m[1].replace(/,/g,"")):0};
+const fmtUSD=n=>n>=1e9?"USD "+(n/1e9).toFixed(n>=1e10?0:1)+" bn":"USD "+Math.round(n/1e6)+" m";
+function hLossChip(lbl,arr){if(!hasLoss(arr))return"";const x=arr.find(a=>!/^(no|not)\b/i.test(a.v));
+  const short=x.v.split(/[(;]/)[0].trim();return `<span class="loss"><b>${lbl}</b>${esc(short)}${arr.filter(a=>!/^(no|not)\b/i.test(a.v)).length>1?" +":""}</span>`}
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function hFiltered(){
+  const q=hist.q.trim().toLowerCase();
+  let ev=hist.data.events.filter(e=>(hist.peril==="all"||e.t===hist.peril)&&(hist.cont==="all"||e.c===hist.cont)&&
+    (!q||[e.n,e.p,e.m,e.sum,TYPES[e.t].one,CONTS[e.c]].join(" ").toLowerCase().includes(q)));
+  const by={date:(a,b)=>new Date(b.d)-new Date(a.d),ins:(a,b)=>lossVal(b.ins)-lossVal(a.ins)||new Date(b.d)-new Date(a.d),
+    econ:(a,b)=>lossVal(b.econ)-lossVal(a.econ)||new Date(b.d)-new Date(a.d),deaths:(a,b)=>deathN(b.deaths)-deathN(a.deaths)||new Date(b.d)-new Date(a.d)};
+  return ev.sort(by[hist.sort]);
+}
+function renderHistTally(){
+  const ev=hist.data.events,t=$("hTally");
+  const withIns=ev.filter(e=>hasLoss(e.ins)),withEcon=ev.filter(e=>hasLoss(e.econ));
+  const topI=[...ev].sort((a,b)=>lossVal(b.ins)-lossVal(a.ins))[0],topE=[...ev].sort((a,b)=>lossVal(b.econ)-lossVal(a.econ))[0];
+  const first=ev.reduce((m,e)=>e.d<m?e.d:m,ev[0]?.d||new Date().toISOString());
+  t.innerHTML=`<div><div class="k">Events archived</div><div class="v">${ev.length}</div><div class="s">since ${fmtDay.format(new Date(first))}</div></div>
+  <div><div class="k">With loss estimates</div><div class="v">${new Set([...withIns,...withEcon]).size}</div><div class="s">${withIns.length} insured · ${withEcon.length} economic</div></div>
+  <div><div class="k">Largest insured loss</div><div class="v">${topI&&lossVal(topI.ins)?esc(fmtUSD(lossVal(topI.ins))):"—"}</div><div class="s">${topI&&lossVal(topI.ins)?esc(topI.n)+" (upper estimate)":""}</div></div>
+  <div><div class="k">Largest economic loss</div><div class="v">${topE&&lossVal(topE.econ)?esc(fmtUSD(lossVal(topE.econ))):"—"}</div><div class="s">${topE&&lossVal(topE.econ)?esc(topE.n)+" (upper estimate)":""}</div></div>`;
+}
+function renderHistList(){
+  const ul=$("hList"),ev=hFiltered();ul.innerHTML="";
+  if(!ev.length){ul.innerHTML=`<li class="empty">No archived events match. Clear the search or filters.</li>`;return}
+  for(const e of ev){const li=document.createElement("li"),b=document.createElement("button");b.type="button";b.className="row";
+    const pill=e.a?`<span class="pill ${e.a}">${e.a}</span>`:"";
+    b.innerHTML=`<span class="bar" style="background:${col(e.t)}"></span><span><div class="t">${esc(e.n)}</div><div class="p">${esc(e.p)} · ${esc(CONTS[e.c])}</div><div class="losses">${hLossChip("Econ",e.econ)}${hLossChip("Insured",e.ins)}${e.deaths&&deathN(e.deaths)?`<span class="loss"><b>Deaths</b>${esc(e.deaths.split(";")[0])}</span>`:""}</div></span><span class="r"><span class="m">${esc(e.m)}</span>${pill}<span class="when">${fmtDay.format(new Date(e.d))}</span></span>`;
+    b.onclick=()=>openSheet(e,b);li.appendChild(b);ul.appendChild(li)}
+}
+let lastFocus=null;
+function lossList(title,arr){
+  const items=(arr&&arr.length?arr:[{v:"Not published",by:"—"}]).map(x=>`<li><span class="amt">${esc(x.v)}</span><span class="by">${x.by&&x.by!=="—"?"Estimate by "+esc(x.by):"No estimator yet"}${x.u?` · <a href="${esc(x.u)}" target="_blank" rel="noopener">source</a>`:""}</span></li>`).join("");
+  return `<section class="lossbox"><h4>${title}</h4><ul>${items}</ul></section>`}
+function openSheet(e,from){
+  lastFocus=from||document.activeElement;
+  const span=e.d2?`${fmtDay.format(new Date(e.d))} – ${fmtDay.format(new Date(e.d2))}`:(isDay(e.d)?fmtDay.format(new Date(e.d)):fmt.format(new Date(e.d)));
+  const mr=(e.mr||[]).map(m=>`<div class="cover"><div><b>${esc(m.o)}</b><span class="st ${esc(m.st)}">${esc(m.st)}</span><span>${esc(m.nt)}</span>${m.u?`<a href="${esc(m.u)}" target="_blank" rel="noopener">View</a>`:""}</div></div>`).join("");
+  $("sPanel").innerHTML=`<button class="close" type="button" id="sClose">Close</button>
+   <div class="eyebrow"><span class="sw" style="background:${col(e.t)}"></span>${esc(TYPES[e.t].one)} · ${esc(CONTS[e.c])}${e.a?` <span class="pill ${e.a}">${e.a} alert</span>`:""}</div>
+   <h2 id="sTitle">${esc(e.n)}</h2>
+   <p>${esc(e.sum||"")}</p>
+   <dl class="facts"><dt>When</dt><dd>${esc(span)}</dd><dt>Where</dt><dd>${esc(e.p)}</dd><dt>Scale</dt><dd>${esc(e.m)}</dd><dt>Casualties</dt><dd>${esc(e.deaths||"None reported")}</dd><dt>Location</dt><dd>${e.la!=null?e.la.toFixed(2)+"°, "+e.lo.toFixed(2)+"°":"—"}</dd></dl>
+   ${lossList("Economic loss",e.econ)}${lossList("Insured loss",e.ins)}
+   ${mr?`<section><h3 style="margin-bottom:6px">Modeler response</h3>${mr}</section>`:""}
+   <div class="links">${(e.src||[]).filter(s=>s.u).map(s=>`<a href="${esc(s.u)}" target="_blank" rel="noopener">${esc(s.name)} →</a>`).join("")}</div>`;
+  $("sheet").hidden=false;$("sPanel").scrollTop=0;$("sPanel").focus();
+  $("sClose").onclick=closeSheet;
+}
+function closeSheet(){$("sheet").hidden=true;if(lastFocus&&lastFocus.focus)lastFocus.focus()}
+function histMatch(e){if(!hist.data)return null;return hist.data.events.find(h=>h.n===e.n||(h.src||[]).some(s=>s.u===e.u)||(h.mr||[]).length&&(e.mr||[]).some(m=>h.mr.some(x=>x.u===m.u)&&h.n.split(" ").slice(-1)[0]===e.n.split(" ").slice(-1)[0]))}
+
+async function loadHistory(){
+  try{const r=await fetch("history.json?"+Date.now(),{cache:"no-store"});const d=await r.json();
+    for(const e of d.events){if(!TYPES[e.t])e.t="unrest";e.c=e.c||(e.la!=null?continent(e.la,e.lo):"ocean")}
+    hist.data=d;$("hCount").textContent=d.events.length;
+    const ps=$("hPeril"),cs=$("hCont");
+    if(ps.options.length===1){for(const [k,v] of Object.entries(TYPES))ps.add(new Option(v.label,k));for(const [k,v] of Object.entries(CONTS))cs.add(new Option(v,k))}
+    renderHistTally();renderHistList();if(state.sel)renderDetail();
+  }catch(e){$("hList").innerHTML=`<li class="empty">The event archive could not be loaded. Reload the page to try again.</li>`}
+}
+function showTab(name){
+  const live=name!=="history";$("v-live").hidden=!live;$("v-history").hidden=live;
+  $("tab-live").setAttribute("aria-selected",live);$("tab-history").setAttribute("aria-selected",!live);
+  try{history.replaceState(null,"","#"+(live?"live":"history"))}catch(_){}
+}
+
+(async()=>{
+  try{const f=JSON.parse(localStorage.getItem("hw-f")||"{}");if(f.t==="all"||TYPES[f.t])state.type=f.t;if(f.c==="all"||CONTS[f.c])state.cont=f.c}catch(_){}
+  $("alertOnly").onchange=e=>{state.alertOnly=e.target.checked;state.showAll=false;drawMarks();renderLists()};
+  $("more").onclick=()=>{state.showAll=true;renderLists()};
+  $("tab-live").onclick=()=>showTab("live");$("tab-history").onclick=()=>showTab("history");
+  $("tabs-kb")?.remove();
+  document.querySelector(".tabs").addEventListener("keydown",ev=>{if(ev.key==="ArrowRight"||ev.key==="ArrowLeft"){const h=$("tab-history").getAttribute("aria-selected")==="true";showTab(h?"live":"history");$(h?"tab-live":"tab-history").focus()}});
+  showTab(location.hash==="#history"?"history":"live");
+  $("hq").oninput=e=>{hist.q=e.target.value;renderHistList()};
+  $("hPeril").onchange=e=>{hist.peril=e.target.value;renderHistList()};
+  $("hCont").onchange=e=>{hist.cont=e.target.value;renderHistList()};
+  $("hSort").onchange=e=>{hist.sort=e.target.value;renderHistList()};
+  $("scrim").onclick=closeSheet;
+  document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!$("sheet").hidden)closeSheet()});
+  await drawBase();await Promise.all([load(),loadHistory()]);
+  setInterval(()=>{load();loadHistory()},10*60*1000);
+  setInterval(()=>{if(state.data){$("upd").textContent=ago(state.data.updated);renderLists()}},60*1000);
+})();
+</script>
+
+</body>
+</html>

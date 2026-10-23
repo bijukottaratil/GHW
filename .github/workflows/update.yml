@@ -1,0 +1,46 @@
+name: Hourly hazard update
+
+on:
+  schedule:
+    - cron: "17 * * * *"   # every hour at :17 (UTC); GitHub may run it a few minutes late
+  workflow_dispatch: {}     # lets you run it by hand from the Actions tab
+
+permissions:
+  contents: write
+
+concurrency:
+  group: hazard-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Fetch feeds and rebuild data
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}   # optional: leave unset to skip loss research
+          CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL }}
+          MAX_LOSS_RESEARCH: ${{ vars.MAX_LOSS_RESEARCH }}
+        run: python scripts/update.py
+
+      - name: Commit updated data
+        run: |
+          git config user.name "hazard-watch-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data.json history.json
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "Update hazard data $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
