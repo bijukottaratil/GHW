@@ -5,6 +5,7 @@ Rebuilds data.json (live events) and merges notable events into history.json
 (the permanent archive). Runs in GitHub Actions; see README.md.
 
 Feeds:      USGS, GDACS, NASA EONET, Smithsonian GVP  (public data feeds)
+Storm paths: Zoom Earth best tracks + forecast positions, per named storm
 Modelers:   Moody's RMS Event Response, Verisk ALERT   (public web pages, scraped)
 Optional:   Claude API (set ANTHROPIC_API_KEY) to read the modeler pages more
             reliably and to research economic / insured loss estimates.
@@ -37,6 +38,7 @@ RESEARCH_EVERY_H = int(os.environ.get("RESEARCH_EVERY_HOURS") or 12)  # per-even
 
 RMS_URL = "https://moodys.com/web/en/us/insights/catastrophe-risk-insights/event-response.html"
 VAL_URL = "https://alert.risksolutions.verisk.com/"
+ZE_URL = "https://zoom.earth/data/storms/"
 SRC = {
     "usgs": ("USGS Earthquake Hazards", "Earthquakes: M5+ past 7 days and significant quakes past 2 weeks", "https://earthquake.usgs.gov/earthquakes/map/"),
     "gdacs": ("GDACS (UN / EU JRC)", "Alert levels, tropical cyclones and satellite-detected wildfires", "https://www.gdacs.org/"),
@@ -44,6 +46,7 @@ SRC = {
     "gvp": ("Smithsonian GVP / USGS", "Weekly volcanic activity report", "https://volcano.si.edu/reports_weekly.cfm"),
     "rms": ("Moody's RMS Event Response", "Modeler coverage of active loss events (full reports need a Moody's login)", RMS_URL),
     "verisk": ("Verisk ALERT (formerly AIR)", "Modeler event alerts with status and loss estimates", VAL_URL),
+    "zoomearth": ("Zoom Earth", "Tropical cyclone best tracks and forecast positions", "https://zoom.earth/"),
 }
 RANK = {"red": 4, "orange": 3, "yellow": 2, "green": 1}
 
@@ -189,6 +192,40 @@ def fetch_eonet():
                             la=la, lo=lo, a=None, m=f"{round(ac):,} acres",
                             x=f"{round(ac):,} acres (~{round(ac * 0.4047):,} ha) · open incident",
                             s="NASA EONET / IRWIN", u=src, v=clamp(0.9 + math.log10(max(ac, 100) / 400) * 1.2)))
+    return out
+
+
+def fetch_zoom_tracks():
+    """Best tracks + forecast positions for every storm Zoom Earth is currently carrying.
+
+    Returns {storm-name-lower: {"tr": [...], "ze": {...}}} so callers can attach a real
+    multi-point track (map path) and an intensity history (dossier chart) to any storm
+    event whose name matches. Zoom Earth names a storm just by its name ("Josephine"),
+    occasionally with an alternate regional name in parentheses ("Champi (Rosal)") or,
+    for an unnamed invest, its numeric code ("98B") -- we key on the first word only so
+    that matches against our own "Tropical Cyclone <name>" titles.
+    """
+    idx = get(ZE_URL, params={"date": iso(NOW), "to": 12}).json()
+    ids = (idx.get("storms") or []) + (idx.get("disturbances") or [])
+    out = {}
+    for sid in ids:
+        try:
+            d = get(ZE_URL, params={"id": sid}).json()
+        except Exception as ex:  # noqa: BLE001
+            log(f"zoomearth {sid} failed: {ex}")
+            continue
+        track = sorted((p for p in d.get("track", []) if p.get("coordinates") and p.get("wind") is not None),
+                       key=lambda p: p["date"])
+        if len(track) < 2:
+            continue
+        obs = [p["date"] for p in track if not p.get("forecast")]
+        key = re.split(r"[\s(]", (d.get("name") or sid).strip())[0].lower()
+        out[key] = dict(
+            tr=[[p["date"], p["coordinates"][1], p["coordinates"][0], p["wind"]] for p in track],
+            ze=dict(pts=[[p["date"], round(p["wind"] * 1.852)] for p in track],
+                    lm=max(obs) if obs else track[-1]["date"],
+                    u=f"https://zoom.earth/storms/{sid}/"),
+        )
     return out
 
 
@@ -533,6 +570,18 @@ def main():
     else:
         events += by_source({"NASA EONET / JTWC", "NASA EONET / IRWIN"})
     events += vols if vols else by_source({"Smithsonian GVP / USGS"})
+
+    zoom = run("zoomearth", fetch_zoom_tracks)
+    prev_tracks = {e["n"].split()[-1].lower(): (e["tr"], e["ze"]) for e in prev["events"]
+                   if e.get("t") == "storm" and e.get("tr") and e.get("ze")}
+    for e in events:
+        if e["t"] != "storm":
+            continue
+        key = e["n"].split()[-1].lower()
+        if zoom is not None and key in zoom:
+            e["tr"], e["ze"] = zoom[key]["tr"], zoom[key]["ze"]
+        elif key in prev_tracks:  # Zoom Earth run failed or dropped this storm: keep the last track
+            e["tr"], e["ze"] = prev_tracks[key]
 
     for key, org, fn in (("rms", "Moody's RMS", fetch_rms), ("verisk", "Verisk", fetch_verisk)):
         items = run(key, fn)
