@@ -1,6 +1,6 @@
 # Global Hazard Watch
 
-A live world map of earthquakes, tropical cyclones, wildfires, volcanoes and civil unrest, with Moody's RMS and Verisk event response, a perils-by-continent table, and an event history with economic and insured loss estimates.
+A live world map of earthquakes, tropical cyclones, wildfires, volcanoes and civil unrest, with Moody's RMS and Verisk event response, a perils-by-continent table, and an event history with economic and insured loss estimates. Active storms show their real track and an intensity-over-time chart, both sourced from Zoom Earth.
 
 It runs entirely on free GitHub services:
 
