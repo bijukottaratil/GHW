@@ -49,6 +49,12 @@ h1{font:800 20px/1 var(--display);font-stretch:125%;text-transform:uppercase;let
 .live{display:inline-flex;align-items:center;gap:6px;text-transform:uppercase;letter-spacing:.08em;color:var(--a-red);font-weight:500}
 .live i{width:7px;height:7px;border-radius:50%;background:currentColor;animation:blink 2s infinite}
 @keyframes blink{50%{opacity:.25}}
+.refresh-btn{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--muted);cursor:pointer}
+.refresh-btn:hover{background:var(--raise);color:var(--ink)}
+.refresh-btn:disabled{opacity:.5;cursor:default}
+.refresh-btn svg{width:12px;height:12px}
+.refresh-btn.spin svg{animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 .tabs{margin-left:auto;display:flex;background:var(--raise);border:1px solid var(--line);border-radius:8px;padding:3px;gap:2px}
 .tabs button{border:0;background:none;padding:6px 14px;border-radius:6px;cursor:pointer;font:700 13px var(--display);font-stretch:112%;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);display:inline-flex;gap:7px;align-items:center;white-space:nowrap}
 .tabs button[aria-selected="true"]{background:var(--ink);color:var(--panel)}
@@ -103,7 +109,7 @@ select.region{border:1px solid var(--line);background:var(--panel);border-radius
 .mk text{font:500 10px var(--mono);fill:var(--panel);text-anchor:middle;dominant-baseline:central;pointer-events:none}
 .mk:focus-visible{outline:none}.mk:focus-visible .dot,.mk:focus-visible .cl{stroke:var(--focus);stroke-width:3}
 @keyframes pulse{0%{transform:scale(1);opacity:.9}100%{transform:scale(3);opacity:0}}
-@media (prefers-reduced-motion:reduce){.mk .ring,.live i{animation:none}}
+@media (prefers-reduced-motion:reduce){.mk .ring,.live i,.refresh-btn.spin svg{animation:none}}
 .trk line{stroke-width:2.2;stroke-linecap:round;opacity:.8}
 .trk circle{stroke:var(--panel);stroke-width:.8}
 .trk.on line{stroke-width:3.6;opacity:1}
@@ -273,7 +279,9 @@ footer{border-top:1px solid var(--line);padding-top:14px;font-size:13px;color:va
       <svg class="mark" viewBox="0 0 26 26" aria-hidden="true"><circle cx="13" cy="13" r="11.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="13" cy="13" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".55"/><circle cx="13" cy="13" r="2.6" fill="var(--a-orange)"/><path d="M13 1.5v4M13 20.5v4M1.5 13h4M20.5 13h4" stroke="currentColor" stroke-width="1.5"/></svg>
       <h1>Global Hazard Watch</h1>
     </div>
-    <div class="stamp"><span class="live"><i></i>Live</span><span>Compiled <b id="upd">—</b></span><span id="updAbs"></span></div>
+    <div class="stamp"><span class="live"><i></i>Live</span><span>Compiled <b id="upd">—</b></span><span id="updAbs"></span>
+      <button type="button" class="refresh-btn" id="refreshBtn" title="Refresh now" aria-label="Refresh now"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.65 4.35A6 6 0 1 0 14 8M13.65 4.35V1M13.65 4.35H10.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    </div>
     <nav class="tabs" role="tablist" aria-label="Views">
       <button role="tab" id="tab-live" aria-selected="true" aria-controls="v-live">Live now</button>
       <button role="tab" id="tab-history" aria-selected="false" aria-controls="v-history">Event history <span class="n" id="hCount"></span></button>
@@ -681,6 +689,13 @@ async function load(){
     renderHead();renderChips();renderMatrix();renderMods();drawMarks();renderLists();renderDetail();
   }catch(e){$("detail").innerHTML=`<p>Event data could not be loaded. Reload the page to try again.</p>`}
 }
+async function manualRefresh(){
+  const btn=$("refreshBtn");
+  if(btn.disabled)return;
+  btn.disabled=true;btn.classList.add("spin");
+  try{await Promise.all([load(),loadHistory()])}
+  finally{btn.disabled=false;btn.classList.remove("spin")}
+}
 
 /* ---------- History ---------- */
 const hist={data:null,q:"",peril:"all",cont:"all",sort:"date"};
@@ -774,6 +789,7 @@ function showTab(name){
   const fl=$("filters");new IntersectionObserver(([en])=>fl.classList.toggle("stuck",en.intersectionRatio<1),{rootMargin:`-${$("bar").offsetHeight+1}px 0px 0px 0px`,threshold:[1]}).observe(fl);
 
   $("alertOnly").onclick=e=>{state.alertOnly=!state.alertOnly;e.currentTarget.setAttribute("aria-pressed",state.alertOnly);state.showAll=false;drawMarks();renderLists()};
+  $("refreshBtn").onclick=manualRefresh;
   $("region").onchange=e=>setFilter(state.type,e.target.value,true);
   $("more").onclick=()=>{state.showAll=true;renderLists()};
   $("tab-live").onclick=()=>showTab("live");$("tab-history").onclick=()=>showTab("history");
