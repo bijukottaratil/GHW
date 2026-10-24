@@ -205,7 +205,10 @@ def fetch_zoom_tracks():
     for an unnamed invest, its numeric code ("98B") -- we key on the first word only so
     that matches against our own "Tropical Cyclone <name>" titles.
     """
-    idx = get(ZE_URL, params={"date": iso(NOW), "to": 12}).json()
+    # Zoom Earth's index only accepts a date snapped to a 6-hourly synoptic time
+    # (00/06/12/18 UTC, no seconds) -- anything else comes back as a JSON error body.
+    snap = NOW.replace(hour=NOW.hour // 6 * 6, minute=0, second=0, microsecond=0)
+    idx = get(ZE_URL, params={"date": snap.strftime("%Y-%m-%dT%H:%MZ"), "to": 12}).json()
     ids = (idx.get("storms") or []) + (idx.get("disturbances") or [])
     out = {}
     for sid in ids:
