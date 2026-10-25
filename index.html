@@ -386,6 +386,7 @@ footer{border-top:1px solid var(--line);padding-top:14px;font-size:13px;color:va
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script>
 const TYPES={quake:{label:"Earthquakes",one:"Earthquake",row:"Earthquake",c:"--quake"},storm:{label:"Storms",one:"Storm",row:"Storm",c:"--storm"},fire:{label:"Wildfires",one:"Wildfire",row:"Wildfire",c:"--fire"},volcano:{label:"Volcanoes",one:"Volcano",row:"Volcano",c:"--volcano"},unrest:{label:"Civil unrest",one:"Civil unrest (SRCC)",row:"Civil unrest",c:"--unrest"}};
 const CONTS={asia:"Asia",oceania:"Oceania",namerica:"N. & C. America",samerica:"S. America",europe:"Europe",africa:"Africa",ocean:"Open ocean"};
@@ -573,12 +574,78 @@ function detailHTML(e,hid){
   <dl class="kv"><dt>Scale</dt><dd>${esc(e.m)}</dd><dt>Time</dt><dd>${esc(when(e))} · ${esc(e.t==="volcano"?"weekly report":ago(e.d))}</dd><dt>Position</dt><dd>${e.la.toFixed(2)}°, ${e.lo.toFixed(2)}°</dd><dt>Source</dt><dd>${esc(e.s)}</dd></dl>
   ${e.t==="storm"?intensityChart(e):""}
   ${mr?`<div class="cover"><div class="eyebrow">Modeler response</div>${mr}</div>`:""}
-  <div class="acts"><a class="btn" href="${esc(e.u)}" target="_blank" rel="noopener">Source report ↗</a>${hm?`<button type="button" class="btn ghost" data-hist>Loss summary</button>`:""}</div></div>`;
+  <div class="acts"><a class="btn" href="${esc(e.u)}" target="_blank" rel="noopener">Source report ↗</a>${hm?`<button type="button" class="btn ghost" data-hist>Loss summary</button>`:""}<button type="button" class="btn ghost" data-report>Download report (PDF)</button></div></div>`;
 }
 function renderDetail(){
   const e=state.sel,el=$("detail");if(!e){el.innerHTML="";return}
   el.innerHTML=detailHTML(e);
   const b=el.querySelector("[data-hist]");if(b)b.onclick=()=>openSheet(histMatch(e),b);
+  const r=el.querySelector("[data-report]");if(r)r.onclick=()=>downloadEventReport(e);
+}
+function downloadEventReport(e){
+  if(!window.jspdf){alert("The report tool didn't load (check your connection) — try again in a moment.");return}
+  const {jsPDF}=window.jspdf,doc=new jsPDF({unit:"pt",format:"a4"});
+  const M=48,PW=doc.internal.pageSize.getWidth(),PH=doc.internal.pageSize.getHeight(),CW=PW-M*2;
+  let y=M;
+  const nl=(gap)=>{y+=gap;if(y>PH-M){doc.addPage();y=M}};
+  const text=(txt,{size=10,bold=false,color=[30,30,34],gap=14}={})=>{
+    doc.setFont("helvetica",bold?"bold":"normal");doc.setFontSize(size);doc.setTextColor(...color);
+    for(const wline of doc.splitTextToSize(String(txt),CW)){
+      if(y>PH-M){doc.addPage();y=M}
+      doc.text(wline,M,y);y+=gap;
+    }
+  };
+  const rule=()=>{nl(6);doc.setDrawColor(215);doc.line(M,y,PW-M,y);nl(16)};
+  const h=hist.data?histMatch(e):null;
+
+  text("GLOBAL HAZARD WATCH",{size:9,bold:true,color:[176,68,32],gap:12});
+  text("Event report · generated "+fmt.format(new Date()),{size:9,color:[130,130,135],gap:20});
+  text(e.n,{size:18,bold:true,gap:22});
+  text(`${TYPES[e.t].one} · ${CONTS[e.c]}${e.a?" · "+e.a.toUpperCase()+" ALERT":""}`,{size:10,bold:true,color:[95,95,100],gap:18});
+  rule();
+
+  text(e.p,{size:11,bold:true,gap:15});
+  if(e.x)text(e.x,{size:10,gap:14});
+  rule();
+
+  text("DETAILS",{size:10,bold:true,color:[176,68,32],gap:16});
+  text(`Scale: ${e.m}`,{gap:14});
+  text(`Time: ${when(e)} · ${e.t==="volcano"?"weekly report":ago(e.d)}`,{gap:14});
+  text(`Position: ${e.la.toFixed(2)}°, ${e.lo.toFixed(2)}°`,{gap:14});
+  text(`Primary source: ${e.s}`,{gap:14});
+  rule();
+
+  if(e.mr&&e.mr.length){
+    text("MODELER RESPONSE",{size:10,bold:true,color:[176,68,32],gap:16});
+    for(const m of e.mr){
+      text(`${m.o} — ${m.st}`,{bold:true,gap:13});
+      if(m.nt)text(m.nt,{gap:14});
+    }
+    rule();
+  }
+
+  text("LOSS & CASUALTIES",{size:10,bold:true,color:[176,68,32],gap:16});
+  if(h){
+    text(`Casualties: ${h.deaths||"none reported"}`,{gap:14});
+    const lossLine=(label,arr)=>{
+      if(!hasLoss(arr)){text(`${label}: not published yet`,{gap:14});return}
+      for(const a of arr.filter(x=>!/^(no|not)\b/i.test(x.v||"")))
+        text(`${label}: ${a.v}${a.by&&a.by!=="—"?" (estimate by "+a.by+")":""}`,{gap:14});
+    };
+    lossLine("Economic loss",h.econ);lossLine("Insured loss",h.ins);
+  }else{
+    text("No loss-history record is linked to this event yet.",{gap:14});
+  }
+  rule();
+
+  text("SOURCES",{size:10,bold:true,color:[176,68,32],gap:16});
+  text(e.u,{size:9,color:[40,95,190],gap:13});
+  if(h)for(const s of (h.src||[]))if(s.u)text(`${s.name}: ${s.u}`,{size:9,color:[40,95,190],gap:13});
+
+  nl(10);
+  text("Global Hazard Watch · bijukottaratil.github.io/GHW — informational only; follow official local warnings.",{size:8,color:[150,150,155],gap:12});
+
+  doc.save(`${e.n.replace(/[^a-z0-9]+/gi,"_").replace(/^_+|_+$/g,"").slice(0,70)||"event"}_report.pdf`);
 }
 function select(e,fromMap){
   state.sel=e;renderDetail();drawMarks();renderLists();renderMods();
@@ -586,6 +653,7 @@ function select(e,fromMap){
     const from=document.activeElement;
     showSheet(`<div class="grab"></div><button class="close" type="button" id="sClose">Close</button>${detailHTML(e,"sTitle")}`,from);
     const b=$("sPanel").querySelector("[data-hist]");if(b)b.onclick=()=>openSheet(histMatch(e),from);
+    const r=$("sPanel").querySelector("[data-report]");if(r)r.onclick=()=>downloadEventReport(e);
   }
   if(!fromMap&&e._tp){zoomTo(e._tp.concat([e._p]));return}
   if(!fromMap&&e._p){const x=zt.applyX(e._p[0]),y=zt.applyY(e._p[1]);
