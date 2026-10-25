@@ -604,8 +604,8 @@ function downloadEventReport(e){
   text(`${TYPES[e.t].one} · ${CONTS[e.c]}${e.a?" · "+e.a.toUpperCase()+" ALERT":""}`,{size:10,bold:true,color:[95,95,100],gap:18});
   rule();
 
-  text(e.p,{size:11,bold:true,gap:15});
-  if(e.x)text(e.x,{size:10,gap:14});
+  text("SUMMARY",{size:10,bold:true,color:[176,68,32],gap:16});text(`Affected places: ${e.p||"Not specified"}`,{bold:true,gap:15});
+  text((h&&h.sum&&h.sum.trim())||e.x||"No summary available yet.",{gap:14});
   rule();
 
   text("DETAILS",{size:10,bold:true,color:[176,68,32],gap:16});
