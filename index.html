@@ -400,7 +400,7 @@ const W=960,H=500;
 const proj=d3.geoNaturalEarth1().fitExtent([[6,6],[W-6,H-6]],{type:"Sphere"});
 const path=d3.geoPath(proj);
 const svg=d3.select("#map").attr("viewBox",`0 0 ${W} ${H}`);
-let gBase,gTrk,gMarks,zt=d3.zoomIdentity,mf=1;
+let gBase,gTrk,gMarks,zt=d3.zoomIdentity,mf=1,LAND=null;
 
 function continent(la,lo){
   if(la<-50||(Math.abs(la)<3&&lo>-35&&lo<-10)||(la>52&&la<66&&lo>-45&&lo<-28))return"ocean";
@@ -437,7 +437,7 @@ async function drawBase(){
   gBase=svg.append("g");
   gBase.append("path").datum({type:"Sphere"}).attr("class","sphere").attr("d",path);
   gBase.append("path").datum(d3.geoGraticule10()).attr("class","grat").attr("d",path);
-  try{const w=await (await fetch("land.json")).json();
+  try{const w=await (await fetch("land.json")).json();LAND=w;
     gBase.append("path").datum(topojson.feature(w,w.objects.land)).attr("class","land").attr("d",path);}catch(e){}
   gTrk=svg.append("g");
   gMarks=svg.append("g");
@@ -580,10 +580,49 @@ function renderDetail(){
   const e=state.sel,el=$("detail");if(!e){el.innerHTML="";return}
   el.innerHTML=detailHTML(e);
   const b=el.querySelector("[data-hist]");if(b)b.onclick=()=>openSheet(histMatch(e),b);
-  const r=el.querySelector("[data-report]");if(r)r.onclick=()=>downloadEventReport(e);
+  const r=el.querySelector("[data-report]");if(r)r.onclick=()=>downloadEventReport(e,r);
 }
-function downloadEventReport(e){
+const PERIL_HEX={quake:"#b06a00",storm:"#3a55d4",fire:"#e2540a",volcano:"#c0225a",unrest:"#0a7480"};
+const ALERT_HEX={red:"#d0312d",orange:"#e8680f",yellow:"#c89a00",green:"#2f8a43"};
+const TRACK_HEX=[[137,"#8d1b72"],[113,"#c51f3c"],[96,"#e0531b"],[83,"#f08a1c"],[64,"#d9b310"],[34,"#2f8fd6"],[0,"#8aa1b8"]];
+async function buildLocatorImage(e){
+  if(!LAND)return null;
+  const w=640,h=340,svgNS="http://www.w3.org/2000/svg";
+  const proj2=d3.geoNaturalEarth1().fitExtent([[8,8],[w-8,h-8]],{type:"Sphere"});
+  const path2=d3.geoPath(proj2);
+  const svg=document.createElementNS(svgNS,"svg");
+  svg.setAttribute("xmlns",svgNS);svg.setAttribute("viewBox",`0 0 ${w} ${h}`);
+  svg.setAttribute("width",w);svg.setAttribute("height",h);
+  const mk=(tag,attrs)=>{const el=document.createElementNS(svgNS,tag);for(const k in attrs)el.setAttribute(k,attrs[k]);return el};
+  svg.appendChild(mk("rect",{x:0,y:0,width:w,height:h,fill:"#ffffff"}));
+  svg.appendChild(mk("path",{d:path2({type:"Sphere"}),fill:"#d9e4ec",stroke:"none"}));
+  try{svg.appendChild(mk("path",{d:path2(topojson.feature(LAND,LAND.objects.land)),fill:"#f8f6f0",stroke:"#bfcad4","stroke-width":0.7}))}catch(_){}
+  if(e.tr&&e.tr.length>1){
+    const catHex=kt=>(TRACK_HEX.find(c=>kt>=c[0])||TRACK_HEX[TRACK_HEX.length-1])[1];
+    for(let i=1;i<e.tr.length;i++){
+      const a=proj2([e.tr[i-1][2],e.tr[i-1][1]]),b=proj2([e.tr[i][2],e.tr[i][1]]);
+      if(!a||!b)continue;
+      svg.appendChild(mk("line",{x1:a[0],y1:a[1],x2:b[0],y2:b[1],stroke:catHex(Math.max(e.tr[i-1][3],e.tr[i][3])),"stroke-width":2.6,"stroke-linecap":"round"}));
+    }
+  }
+  const p=proj2([e.lo,e.la]);
+  if(p){
+    const ah=ALERT_HEX[e.a];
+    if(ah)svg.appendChild(mk("circle",{cx:p[0],cy:p[1],r:14,fill:"none",stroke:ah,"stroke-width":2.6,opacity:.85}));
+    svg.appendChild(mk("circle",{cx:p[0],cy:p[1],r:7,fill:PERIL_HEX[e.t]||"#333","stroke":"#ffffff","stroke-width":2.2}));
+  }
+  const svgData="data:image/svg+xml;charset=utf-8,"+encodeURIComponent(new XMLSerializer().serializeToString(svg));
+  const img=new Image();
+  await new Promise((res,rej)=>{img.onload=res;img.onerror=rej;img.src=svgData});
+  const scale=2,canvas=document.createElement("canvas");
+  canvas.width=w*scale;canvas.height=h*scale;
+  const ctx=canvas.getContext("2d");ctx.scale(scale,scale);ctx.drawImage(img,0,0,w,h);
+  return {dataUrl:canvas.toDataURL("image/png"),w,h};
+}
+async function downloadEventReport(e,btn){
   if(!window.jspdf){alert("The report tool didn't load (check your connection) — try again in a moment.");return}
+  if(btn){if(btn.disabled)return;btn.disabled=true;btn.dataset.label=btn.textContent;btn.textContent="Preparing…"}
+  try{
   const {jsPDF}=window.jspdf,doc=new jsPDF({unit:"pt",format:"a4"});
   const M=48,PW=doc.internal.pageSize.getWidth(),PH=doc.internal.pageSize.getHeight(),CW=PW-M*2;
   let y=M;
@@ -604,7 +643,20 @@ function downloadEventReport(e){
   text(`${TYPES[e.t].one} · ${CONTS[e.c]}${e.a?" · "+e.a.toUpperCase()+" ALERT":""}`,{size:10,bold:true,color:[95,95,100],gap:18});
   rule();
 
-  text("SUMMARY",{size:10,bold:true,color:[176,68,32],gap:16});text(`Affected places: ${e.p||"Not specified"}`,{bold:true,gap:15});
+  try{
+    const loc=await buildLocatorImage(e);
+    if(loc){
+      const imgW=CW,imgH=CW*loc.h/loc.w;
+      if(y+imgH>PH-M){doc.addPage();y=M}
+      doc.addImage(loc.dataUrl,"PNG",M,y,imgW,imgH);
+      y+=imgH+10;
+      text(e.tr&&e.tr.length>1?"Approximate location and storm track":"Approximate event location",{size:8,color:[150,150,155],gap:14});
+      rule();
+    }
+  }catch(_){}
+
+  text("SUMMARY",{size:10,bold:true,color:[176,68,32],gap:16});
+  text(`Affected places: ${e.p||"Not specified"}`,{bold:true,gap:15});
   text((h&&h.sum&&h.sum.trim())||e.x||"No summary available yet.",{gap:14});
   rule();
 
@@ -646,6 +698,12 @@ function downloadEventReport(e){
   text("Global Hazard Watch · bijukottaratil.github.io/GHW — informational only; follow official local warnings.",{size:8,color:[150,150,155],gap:12});
 
   doc.save(`${e.n.replace(/[^a-z0-9]+/gi,"_").replace(/^_+|_+$/g,"").slice(0,70)||"event"}_report.pdf`);
+  }catch(err){
+    console.error(err);
+    alert("Couldn't build the report — please try again.");
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent=btn.dataset.label||"Download report (PDF)"}
+  }
 }
 function select(e,fromMap){
   state.sel=e;renderDetail();drawMarks();renderLists();renderMods();
@@ -653,7 +711,7 @@ function select(e,fromMap){
     const from=document.activeElement;
     showSheet(`<div class="grab"></div><button class="close" type="button" id="sClose">Close</button>${detailHTML(e,"sTitle")}`,from);
     const b=$("sPanel").querySelector("[data-hist]");if(b)b.onclick=()=>openSheet(histMatch(e),from);
-    const r=$("sPanel").querySelector("[data-report]");if(r)r.onclick=()=>downloadEventReport(e);
+    const r=$("sPanel").querySelector("[data-report]");if(r)r.onclick=()=>downloadEventReport(e,r);
   }
   if(!fromMap&&e._tp){zoomTo(e._tp.concat([e._p]));return}
   if(!fromMap&&e._p){const x=zt.applyX(e._p[0]),y=zt.applyY(e._p[1]);
