@@ -38,6 +38,7 @@ RESEARCH_EVERY_H = int(os.environ.get("RESEARCH_EVERY_HOURS") or 12)  # per-even
 
 RMS_URL = "https://moodys.com/web/en/us/insights/catastrophe-risk-insights/event-response.html"
 VAL_URL = "https://alert.risksolutions.verisk.com/"
+AON_URL = "https://www.aon.com/en/capabilities/catastrophe-risk-management/impact-forecasting"
 ZE_URL = "https://zoom.earth/data/storms/"
 SRC = {
     "usgs": ("USGS Earthquake Hazards", "Earthquakes: M5+ past 7 days and significant quakes past 2 weeks", "https://earthquake.usgs.gov/earthquakes/map/"),
@@ -46,6 +47,7 @@ SRC = {
     "gvp": ("Smithsonian GVP / USGS", "Weekly volcanic activity report", "https://volcano.si.edu/reports_weekly.cfm"),
     "rms": ("Moody's RMS Event Response", "Modeler coverage of active loss events (full reports need a Moody's login)", RMS_URL),
     "verisk": ("Verisk ALERT (formerly AIR)", "Modeler event alerts with status and loss estimates", VAL_URL),
+    "aon": ("Aon (Impact Forecasting)", "Modeler event notes gathered via web research (no public live event page)", AON_URL),
     "zoomearth": ("Zoom Earth", "Tropical cyclone best tracks and forecast positions", "https://zoom.earth/"),
 }
 RANK = {"red": 4, "orange": 3, "yellow": 2, "green": 1}
@@ -282,8 +284,11 @@ def json_from(text):
 MODEL_SCHEMA = ('Return ONLY JSON: a list of objects {"name": event name, "peril": one of earthquake|tropical cyclone|'
                 'wildfire|volcano|flood|winter storm|severe convective storm|civil unrest|other, "region": affected places, '
                 '"date": ISO date of impact or landfall (YYYY-MM-DD), "status": Active|Monitoring|Closed, '
-                '"note": one sentence in your own words on impacts, "loss": any insured or industry loss estimate quoted on '
-                'the page or null, "url": event link if shown or null, "lat": approx latitude of the main impact, '
+                '"note": 2-4 sentences in your own words covering what happened, affected areas, and current impacts, '
+                '"loss": any insured or industry loss estimate quoted on the page or null, '
+                '"id": any event ID, reference code, or catastrophe number explicitly shown on the page for this event '
+                '(e.g. a code in parentheses next to the name) or null — never invent one, '
+                '"url": event link if shown or null, "lat": approx latitude of the main impact, '
                 '"lon": approx longitude}.')
 
 
@@ -299,14 +304,18 @@ def fetch_rms():
         for e in evs:
             e["status"] = e.get("status") or "Active"
         return evs
-    # No API key: pick event names out of the page text.
-    names = set()
+    # No API key: pick event names (and any visible reference code) out of the page text.
+    names, codes = set(), {}
     for m in re.finditer(PERIL_WORDS + r"\s+([A-Z][a-z]+)(?:\s*\(([^)]+)\))?", text_of(page)):
         if m.group(1) in ("Earthquake", "Wildfire", "Storm") and not m.group(2):
             continue
-        names.add(f"{m.group(1)} {m.group(2)}")
+        nm = f"{m.group(1)} {m.group(2)}"
+        names.add(nm)
+        if m.group(3):
+            codes[nm] = m.group(3)
     return [dict(name=n, peril="tropical cyclone" if re.search("Typhoon|Hurricane|Tropical|Cyclone", n) else "other",
-                 status="Active", note="Listed on Moody's RMS Event Response", url=RMS_URL, loss=None) for n in names]
+                 status="Active", note="Listed on Moody's RMS Event Response", url=RMS_URL, loss=None,
+                 id=codes.get(n)) for n in names]
 
 
 def fetch_verisk():
@@ -327,12 +336,15 @@ def fetch_verisk():
         for e in evs:  # enrich open events from their own pages
             if e.get("status") != "Closed" and e.get("url"):
                 try:
-                    detail = json_from(claude("Event page from Verisk ALERT. Return ONLY JSON {\"note\": one or two "
-                                              "sentences in your own words on impacts, \"loss\": Verisk insured loss "
-                                              "estimate quoted on the page or null}.\n\n" + text_of(get(e["url"]).text)[:40000]))
+                    detail = json_from(claude("Event page from Verisk ALERT. Return ONLY JSON {\"note\": 3-4 "
+                                              "sentences in your own words on impacts, affected areas, and current "
+                                              "status, \"loss\": Verisk insured loss estimate quoted on the page or "
+                                              "null}.\n\n" + text_of(get(e["url"]).text)[:40000]))
                     e.update({k: v for k, v in (detail or {}).items() if v})
                 except Exception as ex:  # noqa: BLE001
                     log("verisk detail", e.get("url"), ex)
+        for e in evs:  # Verisk never publishes a public event ID
+            e["id"] = None
         return evs
     peril_map = {"tropical-cyclone": "tropical cyclone", "earthquake": "earthquake", "other-event": "civil unrest",
                  "flood": "flood", "wildfire": "wildfire", "winter-storm": "winter storm",
@@ -356,7 +368,8 @@ def fetch_verisk():
                 note = sent.group(1) if sent else note
             except Exception as ex:  # noqa: BLE001
                 log("verisk page", url, ex)
-        out.append(dict(name=name, peril=peril_map.get(kind, "other"), status=status, note=note, url=url, loss=loss))
+        out.append(dict(name=name, peril=peril_map.get(kind, "other"), status=status, note=note, url=url, loss=loss,
+                        id=None))
     return out
 
 
@@ -382,8 +395,10 @@ def attach_modelers(events, org, items, previous):
         if not name:
             continue
         key = name.split()[-1].lower()  # storm name or country token
-        mr = dict(o=org, st=it.get("status") or "Active", nt=(it.get("note") or "")[:300], u=it.get("url") or
+        mr = dict(o=org, st=it.get("status") or "Active", nt=(it.get("note") or "")[:600], u=it.get("url") or
                   (RMS_URL if org == "Moody's RMS" else VAL_URL), d=(it.get("date") or NOW.date().isoformat())[:10])
+        if it.get("id"):
+            mr["id"] = str(it["id"])
         if it.get("loss"):
             mr["nt"] = (mr["nt"] + f" · {org} loss estimate: {it['loss']}").strip(" ·")
         match = None
@@ -467,8 +482,13 @@ def merge_history(hist, events):
             cur = next((x for x in h["mr"] if x["o"] == m["o"]), None)
             if cur:
                 cur.update(st=m["st"], nt=m["nt"] or cur["nt"], u=m["u"])
+                if m.get("id"):
+                    cur["id"] = m["id"]
             else:
-                h["mr"].append(dict(o=m["o"], st=m["st"], nt=m["nt"], u=m["u"]))
+                entry = dict(o=m["o"], st=m["st"], nt=m["nt"], u=m["u"])
+                if m.get("id"):
+                    entry["id"] = m["id"]
+                h["mr"].append(entry)
             loss = re.search(r"loss estimate: (.+)$", m["nt"] or "")
             if loss:
                 upsert_loss(h, "ins", loss.group(1), m["o"], m["u"])
@@ -508,11 +528,17 @@ def research_losses(hist):
         prompt = (f"Research the catastrophe \"{h['n']}\" ({h['p']}, starting {h['d'][:10]}). Search the web for the latest "
                   "published ECONOMIC loss and INSURED loss estimates (modelers and brokers such as Verisk, Moody's RMS, "
                   "Karen Clark & Co, Cotality, Aon, Gallagher Re, Swiss Re, Munich Re, Guy Carpenter, PCS; governments; "
-                  "UN/World Bank), and the latest death toll. Make sure each figure refers to THIS event in THIS year "
-                  "(storm names repeat across years). Only report numbers you actually saw in a source. "
-                  'Return ONLY JSON: {"summary": 2-3 sentences in your own words, "deaths": short text or null, '
+                  "UN/World Bank), and the latest death toll. Also specifically check Aon's Impact Forecasting coverage "
+                  "(its Catastrophe Insight page and Global Catastrophe Recap reports) for any note on this event. Make "
+                  "sure each figure refers to THIS event in THIS year (storm names repeat across years). Only report "
+                  "numbers and notes you actually saw in a source. "
+                  'Return ONLY JSON: {"summary": 4-6 sentences in your own words covering what happened, the scale of '
+                  'the event, affected areas, and current status, "deaths": short text or null, '
                   '"econ": [{"v": figure as text e.g. "USD 2-3 billion", "by": estimator, "u": source url}], '
-                  '"ins": [same shape]}. Use empty lists when nothing is published.')
+                  '"ins": [same shape], "aon": {"note": 2-4 sentences in your own words on what Aon Impact Forecasting '
+                  'has published about this event, "loss": any Aon loss estimate as text or null, "url": the Aon page '
+                  'you found this on} or null if Aon has published nothing on this event}. Use empty lists when '
+                  "nothing is published.")
         try:
             res = json_from(claude(prompt, search=True)) or {}
         except Exception as ex:  # noqa: BLE001
@@ -528,7 +554,40 @@ def research_losses(hist):
                 if x.get("v") and x.get("by") and x.get("u"):
                     upsert_loss(h, kind, x["v"], x["by"], x["u"])
                     found += 1
+        aon = res.get("aon")
+        if aon and aon.get("note"):
+            nt = aon["note"][:600]
+            if aon.get("loss"):
+                nt = (nt + f" · Aon loss estimate: {aon['loss']}").strip(" ·")
+            entry = dict(o="Aon (Impact Forecasting)", st="Noted", nt=nt, u=aon.get("url") or AON_URL,
+                         d=iso(NOW)[:10])
+            cur = next((x for x in h["mr"] if x["o"] == entry["o"]), None)
+            if cur:
+                cur.update(st=entry["st"], nt=entry["nt"], u=entry["u"])
+            else:
+                h["mr"].append(entry)
+            if aon.get("loss"):
+                upsert_loss(h, "ins", aon["loss"], "Aon", aon.get("url"))
+                found += 1
     return found
+
+
+def sync_aon_to_live(hist, events):
+    """Push Aon (Impact Forecasting) notes found via research_losses() back onto matching live events,
+    since Aon has no scrapable live event page to attach_modelers() from directly."""
+    for h in hist["events"]:
+        aon = next((m for m in h.get("mr", []) if m["o"] == "Aon (Impact Forecasting)"), None)
+        if not aon:
+            continue
+        tgt = next((e for e in events if e["n"].lower() == h["n"].lower()), None)
+        if not tgt:
+            continue
+        tgt.setdefault("mr", [])
+        cur = next((x for x in tgt["mr"] if x["o"] == aon["o"]), None)
+        if cur:
+            cur.update(st=aon["st"], nt=aon["nt"], u=aon.get("u"))
+        else:
+            tgt["mr"].append(dict(aon))
 
 
 # ---------------------------------------------------------------------- main
@@ -606,16 +665,19 @@ def main():
         else:
             attach_modelers(events, org, items, prev["events"])
 
+    for e in events:
+        e["v"] = clamp(e.get("v", 1.5))
+    added = merge_history(hist, events)
+    found = research_losses(hist)
+    sync_aon_to_live(hist, events)
+    ok["aon"] = bool(API_KEY)  # Aon has no live page; its data comes from the research pass above
+
     for key, (name, covers, url) in SRC.items():
         asof = iso(NOW) if ok.get(key) else prev_src.get(name, {}).get("asof", iso(NOW))
         if key == "gvp" and vols:
             asof = max(e["d"] for e in vols)
         sources.append(dict(name=name, covers=covers, asof=asof, url=url))
 
-    for e in events:
-        e["v"] = clamp(e.get("v", 1.5))
-    added = merge_history(hist, events)
-    found = research_losses(hist)
     for e in events:
         e.pop("uid", None)
 
