@@ -30,6 +30,15 @@ import requests
 ROOT = Path(__file__).resolve().parent.parent
 DATA, HIST = ROOT / "data.json", ROOT / "history.json"
 UA = {"User-Agent": "GlobalHazardWatch/1.0 (+https://github.com)"}
+# Some sources (e.g. Smithsonian GVP) front their feed with a WAF that 403s a bare
+# scripted User-Agent and has occasional transient downtime; a browser-shaped
+# header set plus a couple of retries clears both without touching any other feed.
+BROWSER_UA = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                   "Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
 NOW = dt.datetime.now(dt.timezone.utc)
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 MODEL = os.environ.get("CLAUDE_MODEL") or "claude-sonnet-5-5"
@@ -38,7 +47,6 @@ RESEARCH_EVERY_H = int(os.environ.get("RESEARCH_EVERY_HOURS") or 12)  # per-even
 
 RMS_URL = "https://moodys.com/web/en/us/insights/catastrophe-risk-insights/event-response.html"
 VAL_URL = "https://alert.risksolutions.verisk.com/"
-AON_URL = "https://www.aon.com/en/capabilities/catastrophe-risk-management/impact-forecasting"
 ZE_URL = "https://zoom.earth/data/storms/"
 SRC = {
     "usgs": ("USGS Earthquake Hazards", "Earthquakes: M5+ past 7 days and significant quakes past 2 weeks", "https://earthquake.usgs.gov/earthquakes/map/"),
@@ -47,7 +55,6 @@ SRC = {
     "gvp": ("Smithsonian GVP / USGS", "Weekly volcanic activity report", "https://volcano.si.edu/reports_weekly.cfm"),
     "rms": ("Moody's RMS Event Response", "Modeler coverage of active loss events (full reports need a Moody's login)", RMS_URL),
     "verisk": ("Verisk ALERT (formerly AIR)", "Modeler event alerts with status and loss estimates", VAL_URL),
-    "aon": ("Aon (Impact Forecasting)", "Modeler event notes gathered via web research (no public live event page)", AON_URL),
     "zoomearth": ("Zoom Earth", "Tropical cyclone best tracks and forecast positions", "https://zoom.earth/"),
 }
 RANK = {"red": 4, "orange": 3, "yellow": 2, "green": 1}
@@ -57,10 +64,20 @@ iso = lambda d: d.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 clamp = lambda v: round(max(0.8, min(5.0, v)), 2)
 
 
-def get(url, **kw):
-    r = requests.get(url, headers=UA, timeout=40, **kw)
-    r.raise_for_status()
-    return r
+def get(url, headers=None, retries=1, retry_wait=4, **kw):
+    """GET with retries for sources known to have transient failures (e.g. WAF hiccups,
+    brief outages). retries=1 (the default) is a single attempt, matching prior behaviour."""
+    last = None
+    for attempt in range(retries):
+        try:
+            r = requests.get(url, headers=headers or UA, timeout=40, **kw)
+            r.raise_for_status()
+            return r
+        except Exception as ex:  # noqa: BLE001
+            last = ex
+            if attempt < retries - 1:
+                time.sleep(retry_wait)
+    raise last
 
 
 def parse_date(s):
@@ -235,7 +252,8 @@ def fetch_zoom_tracks():
 
 
 def fetch_volcanoes():
-    root = ET.fromstring(get("https://volcano.si.edu/news/WeeklyVolcanoRSS.xml").content)
+    root = ET.fromstring(get("https://volcano.si.edu/news/WeeklyVolcanoRSS.xml",
+                             headers=BROWSER_UA, retries=3, retry_wait=5).content)
     out = []
     for item in root.iter("item"):
         f = {_local(el.tag): (el.text or "").strip() for el in item.iter()}
@@ -296,7 +314,19 @@ MODEL_SCHEMA = ('Return ONLY JSON: a list of objects {"name": event name, "peril
 PERIL_WORDS = r"(Super Typhoon|Typhoon|Major Hurricane|Hurricane|Tropical Storm|Subtropical Storm|Tropical Cyclone|Cyclone|Winter Storm|Storm|Earthquake|Wildfire|Flood(?:ing|s)?)"
 
 
-def fetch_rms():
+def known_tokens(events):
+    """Name/place tokens already confirmed by a primary feed (USGS/GDACS/EONET/Zoom Earth),
+    used to sanity-check names picked up by the RMS no-API-key text-scraping fallback below."""
+    toks = set()
+    for e in events:
+        toks.add(e["n"].split()[-1].lower())
+        for w in re.findall(r"[A-Za-z]+", e.get("p") or ""):
+            if len(w) > 3:
+                toks.add(w.lower())
+    return toks
+
+
+def fetch_rms(known=None):
     page = get(RMS_URL).text
     if API_KEY:
         evs = json_from(claude("This is the text of Moody's RMS public Event Response page. List every catastrophe "
@@ -304,10 +334,16 @@ def fetch_rms():
         for e in evs:
             e["status"] = e.get("status") or "Active"
         return evs
-    # No API key: pick event names (and any visible reference code) out of the page text.
+    # No API key: pick event names (and any visible reference code) out of the page text. A plain
+    # "peril word + capitalized word" regex over free text throws up false positives ("Typhoon
+    # Current", "Earthquake Max" -- ordinary prose, not event names), so only keep a match whose
+    # captured word is already a name or place we've independently confirmed from another feed.
+    known = known or set()
     names, codes = set(), {}
     for m in re.finditer(PERIL_WORDS + r"\s+([A-Z][a-z]+)(?:\s*\(([^)]+)\))?", text_of(page)):
         if m.group(1) in ("Earthquake", "Wildfire", "Storm") and not m.group(2):
+            continue
+        if not m.group(2) or m.group(2).lower() not in known:
             continue
         nm = f"{m.group(1)} {m.group(2)}"
         names.add(nm)
@@ -528,17 +564,12 @@ def research_losses(hist):
         prompt = (f"Research the catastrophe \"{h['n']}\" ({h['p']}, starting {h['d'][:10]}). Search the web for the latest "
                   "published ECONOMIC loss and INSURED loss estimates (modelers and brokers such as Verisk, Moody's RMS, "
                   "Karen Clark & Co, Cotality, Aon, Gallagher Re, Swiss Re, Munich Re, Guy Carpenter, PCS; governments; "
-                  "UN/World Bank), and the latest death toll. Also specifically check Aon's Impact Forecasting coverage "
-                  "(its Catastrophe Insight page and Global Catastrophe Recap reports) for any note on this event. Make "
-                  "sure each figure refers to THIS event in THIS year (storm names repeat across years). Only report "
-                  "numbers and notes you actually saw in a source. "
+                  "UN/World Bank), and the latest death toll. Make sure each figure refers to THIS event in THIS year "
+                  "(storm names repeat across years). Only report numbers you actually saw in a source. "
                   'Return ONLY JSON: {"summary": 4-6 sentences in your own words covering what happened, the scale of '
                   'the event, affected areas, and current status, "deaths": short text or null, '
                   '"econ": [{"v": figure as text e.g. "USD 2-3 billion", "by": estimator, "u": source url}], '
-                  '"ins": [same shape], "aon": {"note": 2-4 sentences in your own words on what Aon Impact Forecasting '
-                  'has published about this event, "loss": any Aon loss estimate as text or null, "url": the Aon page '
-                  'you found this on} or null if Aon has published nothing on this event}. Use empty lists when '
-                  "nothing is published.")
+                  '"ins": [same shape]}. Use empty lists when nothing is published.')
         try:
             res = json_from(claude(prompt, search=True)) or {}
         except Exception as ex:  # noqa: BLE001
@@ -554,40 +585,7 @@ def research_losses(hist):
                 if x.get("v") and x.get("by") and x.get("u"):
                     upsert_loss(h, kind, x["v"], x["by"], x["u"])
                     found += 1
-        aon = res.get("aon")
-        if aon and aon.get("note"):
-            nt = aon["note"][:600]
-            if aon.get("loss"):
-                nt = (nt + f" · Aon loss estimate: {aon['loss']}").strip(" ·")
-            entry = dict(o="Aon (Impact Forecasting)", st="Noted", nt=nt, u=aon.get("url") or AON_URL,
-                         d=iso(NOW)[:10])
-            cur = next((x for x in h["mr"] if x["o"] == entry["o"]), None)
-            if cur:
-                cur.update(st=entry["st"], nt=entry["nt"], u=entry["u"])
-            else:
-                h["mr"].append(entry)
-            if aon.get("loss"):
-                upsert_loss(h, "ins", aon["loss"], "Aon", aon.get("url"))
-                found += 1
     return found
-
-
-def sync_aon_to_live(hist, events):
-    """Push Aon (Impact Forecasting) notes found via research_losses() back onto matching live events,
-    since Aon has no scrapable live event page to attach_modelers() from directly."""
-    for h in hist["events"]:
-        aon = next((m for m in h.get("mr", []) if m["o"] == "Aon (Impact Forecasting)"), None)
-        if not aon:
-            continue
-        tgt = next((e for e in events if e["n"].lower() == h["n"].lower()), None)
-        if not tgt:
-            continue
-        tgt.setdefault("mr", [])
-        cur = next((x for x in tgt["mr"] if x["o"] == aon["o"]), None)
-        if cur:
-            cur.update(st=aon["st"], nt=aon["nt"], u=aon.get("u"))
-        else:
-            tgt["mr"].append(dict(aon))
 
 
 # ---------------------------------------------------------------------- main
@@ -645,7 +643,7 @@ def main():
         elif key in prev_tracks:  # Zoom Earth run failed or dropped this storm: keep the last track
             e["tr"], e["ze"] = prev_tracks[key]
 
-    for key, org, fn in (("rms", "Moody's RMS", fetch_rms), ("verisk", "Verisk", fetch_verisk)):
+    for key, org, fn in (("rms", "Moody's RMS", lambda: fetch_rms(known_tokens(events))), ("verisk", "Verisk", fetch_verisk)):
         items = run(key, fn)
         if items is not None:
             for e in events:
@@ -669,8 +667,6 @@ def main():
         e["v"] = clamp(e.get("v", 1.5))
     added = merge_history(hist, events)
     found = research_losses(hist)
-    sync_aon_to_live(hist, events)
-    ok["aon"] = bool(API_KEY)  # Aon has no live page; its data comes from the research pass above
 
     for key, (name, covers, url) in SRC.items():
         asof = iso(NOW) if ok.get(key) else prev_src.get(name, {}).get("asof", iso(NOW))
