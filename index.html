@@ -169,7 +169,6 @@ aside.dossier{height:0;min-height:100%;overflow-y:auto;background:var(--panel);b
 .st.Active{background:var(--ink);color:var(--panel)}
 .st.Monitoring{border:1px solid var(--ink)}
 .st.Closed{color:var(--muted);border:1px dashed var(--muted)}
-.st.Noted{color:var(--muted);border:1px solid var(--line2)}
 .mid{font:500 9.5px/1 var(--mono);letter-spacing:.02em;padding:4px 7px;border-radius:999px;white-space:nowrap;color:var(--muted);border:1px dashed var(--line2)}
 
 /* Collapsible sections */
@@ -777,9 +776,8 @@ function fillList(el,items){
 function renderMods(){
   const box=$("mods");box.innerHTML="";
   const srcs=Object.fromEntries(state.data.sources.map(s=>[s.name,s]));
-  const orgs=[["Moody's RMS","Moody's RMS Event Response"],["Verisk","Verisk ALERT (formerly AIR)"],
-    ["Aon (Impact Forecasting)","Aon (Impact Forecasting)"]];
-  const order={Active:0,Monitoring:1,Noted:2,Closed:3};
+  const orgs=[["Moody's RMS","Moody's RMS Event Response"],["Verisk","Verisk ALERT (formerly AIR)"]];
+  const order={Active:0,Monitoring:1,Closed:2};
   for(const [o,sn] of orgs){
     const items=state.data.events.flatMap(e=>(e.mr||[]).filter(m=>m.o===o).map(m=>({e,m})))
       .sort((a,b)=>order[a.m.st]-order[b.m.st]||new Date(b.e.d)-new Date(a.e.d));
