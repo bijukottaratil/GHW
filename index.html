@@ -169,6 +169,8 @@ aside.dossier{height:0;min-height:100%;overflow-y:auto;background:var(--panel);b
 .st.Active{background:var(--ink);color:var(--panel)}
 .st.Monitoring{border:1px solid var(--ink)}
 .st.Closed{color:var(--muted);border:1px dashed var(--muted)}
+.st.Noted{color:var(--muted);border:1px solid var(--line2)}
+.mid{font:500 9.5px/1 var(--mono);letter-spacing:.02em;padding:4px 7px;border-radius:999px;white-space:nowrap;color:var(--muted);border:1px dashed var(--line2)}
 
 /* Collapsible sections */
 details.sec{background:var(--panel);border:1px solid var(--line);border-radius:12px}
@@ -567,7 +569,7 @@ function hideTip(){$("tip").hidden=true}
 /* ---------- Detail ---------- */
 function detailHTML(e,hid){
   const pill=e.a?`<span class="pill ${e.a}">${e.a} alert</span>`:"";
-  const mr=(e.mr||[]).map(m=>`<div class="ci"><div class="ch"><b>${esc(m.o)}</b><span class="st ${esc(m.st)}">${esc(m.st)}</span>${m.u?`<a href="${esc(m.u)}" target="_blank" rel="noopener">View ↗</a>`:""}</div><span>${esc(m.nt)}</span></div>`).join("");
+  const mr=(e.mr||[]).map(m=>`<div class="ci"><div class="ch"><b>${esc(m.o)}</b><span class="st ${esc(m.st)}">${esc(m.st)}</span>${m.id?`<span class="mid">ID ${esc(m.id)}</span>`:""}${m.u?`<a href="${esc(m.u)}" target="_blank" rel="noopener">View ↗</a>`:""}</div><span>${esc(m.nt)}</span></div>`).join("");
   const hm=histMatch(e);
   return `<div class="dc"><div class="eyebrow"><span class="sw" style="background:${col(e.t)}"></span>${esc(TYPES[e.t].one)} · ${esc(CONTS[e.c])}${pill}</div>
   <h2 ${hid?`id="${hid}"`:""}>${esc(e.n)}</h2><p class="pl">${esc(e.p)}</p><p>${esc(e.x)}</p>
@@ -670,7 +672,7 @@ async function downloadEventReport(e,btn){
   if(e.mr&&e.mr.length){
     text("MODELER RESPONSE",{size:10,bold:true,color:[176,68,32],gap:16});
     for(const m of e.mr){
-      text(`${m.o} — ${m.st}`,{bold:true,gap:13});
+      text(`${m.o} — ${m.st}${m.id?` (ID ${m.id})`:""}`,{bold:true,gap:13});
       if(m.nt)text(m.nt,{gap:14});
     }
     rule();
@@ -763,7 +765,8 @@ function makeRow(e,opts={}){
   const li=document.createElement("li"),b=document.createElement("button");
   b.type="button";b.className="row"+(e===state.sel?" sel":"");
   const pill=opts.st?`<span class="st ${esc(opts.st)}">${esc(opts.st)}</span>`:(e.a?`<span class="pill ${e.a}">${e.a}</span>`:"");
-  b.innerHTML=`<span class="bar2" style="background:${col(e.t)}"></span><span><div class="t">${esc(e.n)}</div><div class="p">${esc(e.p)} · ${esc(CONTS[e.c])}</div>${opts.nt?`<div class="nt">${esc(opts.nt)}</div>`:""}</span><span class="r"><span class="m">${esc(e.m)}</span>${pill}<span class="when">${esc(opts.when||(e.t==="volcano"?"weekly report":ago(e.d)))}</span></span>`;
+  const idb=opts.id?`<span class="mid">ID ${esc(opts.id)}</span>`:"";
+  b.innerHTML=`<span class="bar2" style="background:${col(e.t)}"></span><span><div class="t">${esc(e.n)}</div><div class="p">${esc(e.p)} · ${esc(CONTS[e.c])}</div>${opts.nt?`<div class="nt">${esc(opts.nt)}</div>`:""}</span><span class="r"><span class="m">${esc(e.m)}</span>${pill}${idb}<span class="when">${esc(opts.when||(e.t==="volcano"?"weekly report":ago(e.d)))}</span></span>`;
   b.onclick=()=>select(e,false);li.appendChild(b);return li;
 }
 function fillList(el,items){
@@ -774,8 +777,9 @@ function fillList(el,items){
 function renderMods(){
   const box=$("mods");box.innerHTML="";
   const srcs=Object.fromEntries(state.data.sources.map(s=>[s.name,s]));
-  const orgs=[["Moody's RMS","Moody's RMS Event Response"],["Verisk","Verisk ALERT (formerly AIR)"]];
-  const order={Active:0,Monitoring:1,Closed:2};
+  const orgs=[["Moody's RMS","Moody's RMS Event Response"],["Verisk","Verisk ALERT (formerly AIR)"],
+    ["Aon (Impact Forecasting)","Aon (Impact Forecasting)"]];
+  const order={Active:0,Monitoring:1,Noted:2,Closed:3};
   for(const [o,sn] of orgs){
     const items=state.data.events.flatMap(e=>(e.mr||[]).filter(m=>m.o===o).map(m=>({e,m})))
       .sort((a,b)=>order[a.m.st]-order[b.m.st]||new Date(b.e.d)-new Date(a.e.d));
@@ -785,7 +789,7 @@ function renderMods(){
     if(srcs[sn])sec.querySelector("a").href=srcs[sn].url;
     const ul=sec.querySelector("ul");
     if(!items.length)ul.innerHTML=`<li class="empty">No events listed.</li>`;
-    for(const {e,m} of items)ul.appendChild(makeRow(e,{st:m.st,nt:m.nt,when:fmtDay.format(new Date(m.d))}));
+    for(const {e,m} of items)ul.appendChild(makeRow(e,{st:m.st,nt:m.nt,id:m.id,when:fmtDay.format(new Date(m.d))}));
     box.appendChild(sec)}
 }
 function renderLists(){
@@ -873,7 +877,7 @@ function showSheet(html,from){
 function openSheet(e,from){
   if(!e)return;
   const span=e.d2?`${fmtDay.format(new Date(e.d))} – ${fmtDay.format(new Date(e.d2))}`:(isDay(e.d)?fmtDay.format(new Date(e.d)):fmt.format(new Date(e.d)));
-  const mr=(e.mr||[]).map(m=>`<div class="ci"><div class="ch"><b>${esc(m.o)}</b><span class="st ${esc(m.st)}">${esc(m.st)}</span>${m.u?`<a href="${esc(m.u)}" target="_blank" rel="noopener">View ↗</a>`:""}</div><span>${esc(m.nt)}</span></div>`).join("");
+  const mr=(e.mr||[]).map(m=>`<div class="ci"><div class="ch"><b>${esc(m.o)}</b><span class="st ${esc(m.st)}">${esc(m.st)}</span>${m.id?`<span class="mid">ID ${esc(m.id)}</span>`:""}${m.u?`<a href="${esc(m.u)}" target="_blank" rel="noopener">View ↗</a>`:""}</div><span>${esc(m.nt)}</span></div>`).join("");
   showSheet(`<div class="grab"></div><button class="close" type="button" id="sClose">Close</button>
    <div class="eyebrow"><span class="sw" style="background:${col(e.t)}"></span>${esc(TYPES[e.t].one)} · ${esc(CONTS[e.c])}${e.a?` <span class="pill ${e.a}">${e.a} alert</span>`:""}</div>
    <h2 id="sTitle">${esc(e.n)}</h2>
