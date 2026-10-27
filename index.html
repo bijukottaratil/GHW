@@ -400,8 +400,8 @@ const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&g
 const narrow=matchMedia("(max-width: 900px)");
 const reduced=matchMedia("(prefers-reduced-motion: reduce)");
 let map,tileLayer,trkLayer,markLayer,LAND=null;
-const TILE_LIGHT="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
-const TILE_DARK="https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png";
+const TILE_LIGHT="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}";
+const TILE_DARK="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}";
 function isDarkMap(){const t=document.documentElement.getAttribute("data-theme");
   if(t==="dark")return true;if(t==="light")return false;return matchMedia("(prefers-color-scheme: dark)").matches}
 
@@ -429,12 +429,12 @@ const col=t=>`var(${TYPES[t].c})`;
 const key=e=>e.u+"|"+e.d+"|"+e.la;
 const topAlert=arr=>{const r=arr.reduce((m,e)=>Math.max(m,RANK[e.a]||0),0);return Object.keys(RANK).find(k=>RANK[k]===r)||null};
 
-/* ---------- Map (Leaflet + free OSM/CARTO tiles) ---------- */
+/* ---------- Map (Leaflet + free Esri basemap tiles, no API key) ---------- */
 async function drawBase(){
   map=L.map("map",{center:[20,8],zoom:2,minZoom:2,maxZoom:12,worldCopyJump:true,
     zoomControl:false,scrollWheelZoom:false,doubleClickZoom:false,attributionControl:true});
-  tileLayer=L.tileLayer(isDarkMap()?TILE_DARK:TILE_LIGHT,{subdomains:"abcd",maxZoom:19,
-    attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>'
+  tileLayer=L.tileLayer(isDarkMap()?TILE_DARK:TILE_LIGHT,{maxZoom:19,maxNativeZoom:16,
+    attribution:'&copy; <a href="https://www.esri.com" target="_blank" rel="noopener">Esri</a>, HERE, Garmin, FAO, NOAA, USGS'
   }).addTo(map);
   trkLayer=L.layerGroup().addTo(map);
   markLayer=L.layerGroup().addTo(map);
