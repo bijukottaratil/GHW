@@ -3,6 +3,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,500..900&family=Martian+Mono:wght@400;500&family=Public+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
 /* Layout: operations console. Sticky header and filter rail, zoomable chart-room map with a side dossier (bottom sheet on phones), then collapsible analysis panels and ranked lists. */
 :root{
@@ -91,12 +92,17 @@ select.region{border:1px solid var(--line);background:var(--panel);border-radius
 .stage{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:14px;align-items:stretch}
 @media (max-width:900px){.stage{grid-template-columns:minmax(0,1fr)}.stage>aside{display:none}}
 .mapcard{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;min-width:0}
-.mapbox{position:relative;background:var(--sea);touch-action:pan-y}
-.mapbox svg{display:block;width:100%;height:auto;cursor:grab}
-.mapbox svg:active{cursor:grabbing}
-.land{fill:var(--land);stroke:var(--coast);stroke-width:.6;vector-effect:non-scaling-stroke}
-.grat{fill:none;stroke:var(--grat);stroke-width:.6;vector-effect:non-scaling-stroke}
-.sphere{fill:var(--sea);stroke:none}
+.mapbox{position:relative;background:var(--sea);touch-action:pan-y;aspect-ratio:1.92;min-height:320px}
+#map{position:absolute;inset:0;width:100%;height:100%;background:var(--sea);font:inherit}
+.leaflet-control-attribution{background:color-mix(in srgb,var(--panel) 85%,transparent)!important;color:var(--muted)!important;font:400 9.5px var(--mono)!important;border-radius:6px 0 0 0!important}
+.leaflet-control-attribution a{color:var(--muted)!important}
+.mk-icon{background:none;border:0}
+.mk-icon:focus-visible{outline:none}
+.mk-icon:focus-visible .mk .dot,.mk-icon:focus-visible .mk .cl{stroke:var(--focus);stroke-width:3}
+.leaflet-tooltip.tip-lf{background:var(--ink);color:var(--panel);padding:7px 10px;border-radius:6px;font:400 12.5px/1.35 var(--body);max-width:260px;border:0;box-shadow:none}
+.leaflet-tooltip.tip-lf::before{display:none}
+.leaflet-tooltip.tip-lf b{display:block;font-weight:600}
+.leaflet-tooltip.tip-lf span{font:400 10.5px var(--mono);opacity:.8}
 .mk{cursor:pointer}
 .mk .dot{stroke:var(--panel);stroke-width:1.2}
 .mk.sel .dot{stroke:var(--ink);stroke-width:2.6}
@@ -110,10 +116,10 @@ select.region{border:1px solid var(--line);background:var(--panel);border-radius
 .mk:focus-visible{outline:none}.mk:focus-visible .dot,.mk:focus-visible .cl{stroke:var(--focus);stroke-width:3}
 @keyframes pulse{0%{transform:scale(1);opacity:.9}100%{transform:scale(3);opacity:0}}
 @media (prefers-reduced-motion:reduce){.mk .ring,.live i,.refresh-btn.spin svg{animation:none}}
-.trk line{stroke-width:2.2;stroke-linecap:round;opacity:.8}
-.trk circle{stroke:var(--panel);stroke-width:.8}
-.trk.on line{stroke-width:3.6;opacity:1}
-.trk.on circle{stroke-width:1.2}
+.trk-seg{stroke-width:2.2;stroke-linecap:round;opacity:.8}
+.trk-seg.on{stroke-width:3.6;opacity:1}
+.trk-pt{stroke:var(--panel);stroke-width:.8}
+.trk-pt.on{stroke-width:1.2}
 .td{stroke:var(--c-td);fill:var(--c-td)}.ts{stroke:var(--c-ts);fill:var(--c-ts)}.c1{stroke:var(--c-c1);fill:var(--c-c1)}.c2{stroke:var(--c-c2);fill:var(--c-c2)}.c3{stroke:var(--c-c3);fill:var(--c-c3)}.c4{stroke:var(--c-c4);fill:var(--c-c4)}.c5{stroke:var(--c-c5);fill:var(--c-c5)}
 .ramp{display:inline-flex;gap:3px;align-items:center}
 .ramp i{width:14px;height:4px;border-radius:2px;display:inline-block}
@@ -136,9 +142,6 @@ select.region{border:1px solid var(--line);background:var(--panel);border-radius
 .zoomctl button+button{border-top:1px solid var(--line)}
 .zoomctl button:hover{background:var(--raise)}
 .zoomctl svg{width:15px;height:15px;cursor:pointer}
-.tip{position:absolute;z-index:3;pointer-events:none;background:var(--ink);color:var(--panel);padding:7px 10px;border-radius:6px;font-size:12.5px;line-height:1.35;max-width:260px;transform:translate(-50%,calc(-100% - 14px))}
-.tip b{display:block;font-weight:600}
-.tip span{font:400 10.5px var(--mono);opacity:.8}
 .mapfoot{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;padding:9px 12px;border-top:1px solid var(--line);font:400 10.5px/1.4 var(--mono);color:var(--muted)}
 .mapfoot span{display:inline-flex;align-items:center;gap:5px}
 .mapfoot .hint{margin-left:auto}
@@ -313,13 +316,12 @@ footer{border-top:1px solid var(--line);padding-top:14px;font-size:13px;color:va
     <div class="stage">
       <div class="mapcard">
         <div class="mapbox" id="mapbox">
-          <svg id="map" role="img" aria-label="World map of current hazard events"></svg>
+          <div id="map" aria-label="World map of current hazard events"></div>
           <div class="zoomctl">
             <button type="button" id="zin" aria-label="Zoom in">+</button>
             <button type="button" id="zout" aria-label="Zoom out">−</button>
             <button type="button" id="zfit" aria-label="Show whole world"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
           </div>
-          <div class="tip" id="tip" hidden></div>
         </div>
         <div class="mapfoot">
           <span><i class="sw" style="background:var(--quake)"></i>Earthquake</span>
@@ -337,15 +339,14 @@ footer{border-top:1px solid var(--line);padding-top:14px;font-size:13px;color:va
     </div>
 
     <div class="cols">
-      <section class="lcard">
-        <header><h3>Highest alerts</h3><span class="sub">by severity</span></header>
-        <ul class="list" id="top"></ul>
-      </section>
-      <section class="lcard">
-        <header><h3>Event log</h3><span class="sub" id="logCount"></span></header>
-        <ul class="list" id="log"></ul>
-        <button class="chip more" id="more" type="button" hidden>Show all</button>
-      </section>
+      <details class="sec" id="secTop">
+        <summary><h3>Highest alerts</h3><span class="sub">by severity</span></summary>
+        <div class="sec-b"><ul class="list" id="top"></ul></div>
+      </details>
+      <details class="sec" id="secLog">
+        <summary><h3>Event log</h3><span class="sub" id="logCount"></span></summary>
+        <div class="sec-b"><ul class="list" id="log"></ul><button class="chip more" id="more" type="button" hidden>Show all</button></div>
+      </details>
     </div>
 
     <details class="sec" id="secMx" open>
@@ -385,6 +386,7 @@ footer{border-top:1px solid var(--line);padding-top:14px;font-size:13px;color:va
   <article class="panel" role="dialog" aria-modal="true" aria-labelledby="sTitle" id="sPanel" tabindex="-1"></article>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -397,11 +399,11 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const narrow=matchMedia("(max-width: 900px)");
 const reduced=matchMedia("(prefers-reduced-motion: reduce)");
-const W=960,H=500;
-const proj=d3.geoNaturalEarth1().fitExtent([[6,6],[W-6,H-6]],{type:"Sphere"});
-const path=d3.geoPath(proj);
-const svg=d3.select("#map").attr("viewBox",`0 0 ${W} ${H}`);
-let gBase,gTrk,gMarks,zt=d3.zoomIdentity,mf=1,LAND=null;
+let map,tileLayer,trkLayer,markLayer,LAND=null;
+const TILE_LIGHT="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
+const TILE_DARK="https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png";
+function isDarkMap(){const t=document.documentElement.getAttribute("data-theme");
+  if(t==="dark")return true;if(t==="light")return false;return matchMedia("(prefers-color-scheme: dark)").matches}
 
 function continent(la,lo){
   if(la<-50||(Math.abs(la)<3&&lo>-35&&lo<-10)||(la>52&&la<66&&lo>-45&&lo<-28))return"ocean";
@@ -427,103 +429,114 @@ const col=t=>`var(${TYPES[t].c})`;
 const key=e=>e.u+"|"+e.d+"|"+e.la;
 const topAlert=arr=>{const r=arr.reduce((m,e)=>Math.max(m,RANK[e.a]||0),0);return Object.keys(RANK).find(k=>RANK[k]===r)||null};
 
-/* ---------- Map ---------- */
-const zoom=d3.zoom().scaleExtent([1,14]).translateExtent([[0,0],[W,H]])
-  .filter(ev=>{if(ev.type==="wheel")return ev.ctrlKey||ev.metaKey;
-    if(ev.type==="touchstart")return ev.touches.length>1||zt.k>1.01;
-    return !ev.button})
-  .on("zoom",ev=>{zt=ev.transform;gBase.attr("transform",zt);drawMarks();hideTip()});
-
+/* ---------- Map (Leaflet + free OSM/CARTO tiles) ---------- */
 async function drawBase(){
-  gBase=svg.append("g");
-  gBase.append("path").datum({type:"Sphere"}).attr("class","sphere").attr("d",path);
-  gBase.append("path").datum(d3.geoGraticule10()).attr("class","grat").attr("d",path);
-  try{const w=await (await fetch("land.json")).json();LAND=w;
-    gBase.append("path").datum(topojson.feature(w,w.objects.land)).attr("class","land").attr("d",path);}catch(e){}
-  gTrk=svg.append("g");
-  gMarks=svg.append("g");
-  svg.call(zoom).on("dblclick.zoom",null);
-  $("zin").onclick=()=>svg.transition().duration(reduced.matches?0:300).call(zoom.scaleBy,1.7);
-  $("zout").onclick=()=>svg.transition().duration(reduced.matches?0:300).call(zoom.scaleBy,1/1.7);
+  map=L.map("map",{center:[20,8],zoom:2,minZoom:2,maxZoom:12,worldCopyJump:true,
+    zoomControl:false,scrollWheelZoom:false,doubleClickZoom:false,attributionControl:true});
+  tileLayer=L.tileLayer(isDarkMap()?TILE_DARK:TILE_LIGHT,{subdomains:"abcd",maxZoom:19,
+    attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>'
+  }).addTo(map);
+  trkLayer=L.layerGroup().addTo(map);
+  markLayer=L.layerGroup().addTo(map);
+  map.on("moveend zoomend",drawMarks);
+  $("mapbox").addEventListener("wheel",ev=>{ // require Ctrl/Cmd+scroll to zoom, so page scroll isn't trapped
+    if(!(ev.ctrlKey||ev.metaKey))return;
+    ev.preventDefault();
+    map.setZoomAround(map.mouseEventToContainerPoint(ev),map.getZoom()+(ev.deltaY<0?1:-1),{animate:false});
+  },{passive:false});
+  try{matchMedia("(prefers-color-scheme: dark)").addEventListener("change",()=>tileLayer.setUrl(isDarkMap()?TILE_DARK:TILE_LIGHT));}catch(_){}
+  try{const w=await (await fetch("land.json")).json();LAND=w;}catch(e){} // used only by the static PDF locator image
+  $("zin").onclick=()=>map.zoomIn();
+  $("zout").onclick=()=>map.zoomOut();
   $("zfit").onclick=()=>zoomTo(null);
-  if(matchMedia("(hover: none)").matches)$("hint").textContent="Pinch to zoom · drag to pan once zoomed · tap a group to open it";
+  if(matchMedia("(hover: none)").matches)$("hint").textContent="Pinch to zoom · drag to pan · tap a group to open it";
 }
-function zoomTo(pts,minK=1){
-  let t=d3.zoomIdentity;
+function zoomTo(pts,maxZoom){
+  const opts={padding:[50,50],animate:!reduced.matches,duration:reduced.matches?0:0.65};
   if(pts&&pts.length){
-    const xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]);
-    const x0=d3.min(xs)-50,x1=d3.max(xs)+50,y0=d3.min(ys)-50,y1=d3.max(ys)+50;
-    const k=Math.max(minK,Math.min(10,0.92/Math.max((x1-x0)/W,(y1-y0)/H)));
-    if(k>1.05)t=d3.zoomIdentity.translate(W/2,H/2).scale(k).translate(-(x0+x1)/2,-(y0+y1)/2);
+    map.flyToBounds(L.latLngBounds(pts.map(p=>[p[1],p[0]])),{...opts,maxZoom:maxZoom||11});
+  }else{
+    map.flyTo([20,8],2,opts);
   }
-  svg.transition().duration(reduced.matches?0:650).call(zoom.transform,t);
 }
 function visible(e){return (state.type==="all"||e.t===state.type)&&(state.cont==="all"||e.c===state.cont)&&(!state.alertOnly||RANK[e.a]>=3)}
 
 function layout(){
-  const R=zt.k>=6?0:15*mf;
-  const pts=state.data.events.filter(visible).map(e=>({e,x:zt.applyX(e._p[0]),y:zt.applyY(e._p[1])}))
-    .filter(p=>p.x>-30&&p.x<W+30&&p.y>-30&&p.y<H+30).sort((a,b)=>score(b.e)-score(a.e));
+  if(!state.data||!map)return [];
+  const R=map.getZoom()>=7?0:(($("mapbox").clientWidth||640)<480?20:15);
+  const size=map.getSize();
+  const pts=state.data.events.filter(e=>visible(e)&&e._p).map(e=>{
+      const pt=map.latLngToContainerPoint([e.la,e.lo]);return {e,x:pt.x,y:pt.y}})
+    .filter(p=>p.x>-40&&p.x<size.x+40&&p.y>-40&&p.y<size.y+40).sort((a,b)=>score(b.e)-score(a.e));
   const out=[];
   for(const p of pts){
     if(R&&p.e!==state.sel){const c=out.find(c=>c.items[0].e!==state.sel&&Math.hypot(c.x-p.x,c.y-p.y)<R);if(c){c.items.push(p);continue}}
     out.push({x:p.x,y:p.y,items:[p]});
   }
-  for(const c of out)if(c.items.length>1){c.x=d3.mean(c.items,i=>i.x);c.y=d3.mean(c.items,i=>i.y)}
+  for(const c of out){
+    if(c.items.length>1){c.la=d3.mean(c.items,i=>i.e.la);c.lo=d3.mean(c.items,i=>i.e.lo)}
+    else{c.la=c.items[0].e.la;c.lo=c.items[0].e.lo}
+  }
   return out;
 }
-const nkey=n=>n.items.length>1?"c|"+key(n.items[0].e)+"|"+n.items.length:key(n.items[0].e);
-
-function buildMark(n){
-  const s=d3.select(this);
+function markIcon(n){
+  const sel=n.items.length===1&&n.items[0].e===state.sel;
+  let r,g="";
   if(n.items.length>1){
-    const r=9+Math.sqrt(n.items.length)*2.4,lv=topAlert(n.items.map(i=>i.e));
-    if(lv&&RANK[lv]>=2)s.append("circle").attr("class","clr").attr("r",r+2.5).attr("stroke",`var(--a-${lv})`);
-    if(lv&&RANK[lv]>=3)s.append("circle").attr("class","ring").attr("r",r+2).attr("stroke",`var(--a-${lv})`);
-    s.append("circle").attr("class","cl").attr("r",r);
-    s.append("text").text(n.items.length);
-    return;
+    r=9+Math.sqrt(n.items.length)*2.4;const lv=topAlert(n.items.map(i=>i.e));
+    if(lv&&RANK[lv]>=2)g+=`<circle class="clr" cx="${r+9}" cy="${r+9}" r="${r+2.5}" stroke="var(--a-${lv})"/>`;
+    if(lv&&RANK[lv]>=3)g+=`<circle class="ring" cx="${r+9}" cy="${r+9}" r="${r+2}" stroke="var(--a-${lv})"/>`;
+    g+=`<circle class="cl" cx="${r+9}" cy="${r+9}" r="${r}"/><text x="${r+9}" y="${r+9}">${n.items.length}</text>`;
+  }else{
+    const e=n.items[0].e;r=3+e.v*1.8;const c=r+9;
+    if(RANK[e.a]>=3)g+=`<circle class="ring" cx="${c}" cy="${c}" r="${r}" stroke="var(--a-${e.a})"/>`;
+    if(e.a==="red")g+=`<circle class="halo" cx="${c}" cy="${c}" r="${r+4}" stroke="var(--a-red)"/>`;
+    g+=`<circle class="dot" cx="${c}" cy="${c}" r="${r}" fill="${col(e.t)}" fill-opacity=".85"/>`;
+    if(e.mr){const q=r+4.5;g+=`<rect class="modr" x="${c-q}" y="${c-q}" width="${q*2}" height="${q*2}" transform="rotate(45 ${c} ${c})"/>`}
+    if(sel)g+=`<circle class="selr" cx="${c}" cy="${c}" r="${r+9}" opacity="1"/>`;
   }
-  const e=n.items[0].e,r=3+e.v*1.8;
-  if(RANK[e.a]>=3)s.append("circle").attr("class","ring").attr("r",r).attr("stroke",`var(--a-${e.a})`);
-  if(e.a==="red")s.append("circle").attr("class","halo").attr("r",r+4).attr("stroke","var(--a-red)");
-  s.append("circle").attr("class","dot").attr("r",r).attr("fill",col(e.t)).attr("fill-opacity",.85);
-  if(e.mr){const q=r+4.5;s.append("rect").attr("class","modr").attr("x",-q).attr("y",-q).attr("width",q*2).attr("height",q*2).attr("transform","rotate(45)")}
-  s.append("circle").attr("class","selr").attr("r",r+9).attr("opacity",0);
+  const s=(r+9)*2;
+  return {html:`<svg class="mk${sel?" sel":""}" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}">${g}</svg>`,size:s,sel};
 }
 function drawMarks(){
-  if(!state.data||!gMarks)return;
-  const bw=$("mapbox").clientWidth||W;mf=Math.min(1.9,Math.max(1,W/bw*0.62));
+  if(!state.data||!map)return;
   drawTracks();
-  const nodes=layout();
-  gMarks.selectAll("g.mk").data(nodes,nkey).join(enter=>{
-    const g=enter.append("g").attr("class","mk").attr("tabindex",0).attr("role","button");
-    g.each(buildMark);
-    g.on("click",(ev,n)=>onMark(n)).on("keydown",(ev,n)=>{if(ev.key==="Enter"||ev.key===" "){ev.preventDefault();onMark(n)}})
-     .on("pointerenter",(ev,n)=>{if(ev.pointerType!=="touch")showTip(n)}).on("pointerleave",hideTip)
-     .on("focus",(ev,n)=>showTip(n)).on("blur",hideTip);
-    return g})
-   .attr("transform",n=>`translate(${n.x},${n.y}) scale(${mf})`)
-   .attr("aria-label",n=>n.items.length>1?`${n.items.length} events grouped. Open to zoom in.`:`${n.items[0].e.n}, ${n.items[0].e.p}`)
-   .classed("sel",n=>n.items.length===1&&n.items[0].e===state.sel)
-   .each(function(n){d3.select(this).select(".selr").attr("opacity",n.items.length===1&&n.items[0].e===state.sel?1:0)});
-  gMarks.selectAll("g.mk.sel").raise();
+  markLayer.clearLayers();
+  for(const n of layout()){
+    const {html,size,sel}=markIcon(n);
+    const label=n.items.length>1?`${n.items.length} events grouped. Open to zoom in.`:`${n.items[0].e.n}, ${n.items[0].e.p}`;
+    const tipHtml=n.items.length>1
+      ?`<b>${n.items.length} events here</b><span>${n.items.slice(0,4).map(i=>esc(i.e.n)).join(" · ")}${n.items.length>4?" …":""}</span>`
+      :(e=>`<b>${esc(e.n)}</b><span>${esc(e.m)} · ${esc(e.p)}${e.a?" · "+e.a+" alert":""}</span>`)(n.items[0].e);
+    const m=L.marker([n.la,n.lo],{icon:L.divIcon({html,className:"mk-icon"+(sel?" mk-sel":""),iconSize:[size,size],iconAnchor:[size/2,size/2]}),
+      keyboard:true,riseOnHover:true});
+    m.bindTooltip(tipHtml,{className:"tip-lf",direction:"top",offset:[0,-size/2-4]});
+    m.on("click",()=>onMark(n));
+    m.on("add",()=>{const el=m.getElement();if(!el)return;el.setAttribute("role","button");el.setAttribute("aria-label",label);
+      el.addEventListener("focus",()=>m.openTooltip());el.addEventListener("blur",()=>m.closeTooltip())});
+    markLayer.addLayer(m);
+  }
 }
 const CAT=[[137,"c5"],[113,"c4"],[96,"c3"],[83,"c2"],[64,"c1"],[34,"ts"],[0,"td"]];
 const cat=kt=>CAT.find(c=>kt>=c[0])[1];
 function drawTracks(){
-  const storms=state.data.events.filter(e=>e._tp&&visible(e)).sort((a,b)=>(a===state.sel)-(b===state.sel));
-  const g=gTrk.selectAll("g.trk").data(storms,key).join(en=>en.append("g").attr("class","trk"));
-  g.classed("on",e=>e===state.sel).order();
-  g.each(function(e){
-    const P=e._tp.map((q,i)=>({x:zt.applyX(q[0]),y:zt.applyY(q[1]),kt:e.tr[i][3],lo:e.tr[i][2],t:e.tr[i][0]}));
-    const segs=[];for(let i=1;i<P.length;i++)if(Math.abs(P[i].lo-P[i-1].lo)<180)segs.push({a:P[i-1],b:P[i],c:cat(Math.max(P[i-1].kt,P[i].kt))});
-    const s=d3.select(this);
-    s.selectAll("line").data(segs).join("line").attr("class",d=>d.c).attr("x1",d=>d.a.x).attr("y1",d=>d.a.y).attr("x2",d=>d.b.x).attr("y2",d=>d.b.y);
-    s.selectAll("circle").data(P.slice(0,-1)).join(en=>en.append("circle").call(c=>c.append("title")))
-      .attr("class",d=>cat(d.kt)).attr("cx",d=>d.x).attr("cy",d=>d.y).attr("r",(e===state.sel?2.6:1.9)*mf)
-      .select("title").text(d=>`${e.n} · ${fmt.format(new Date(d.t))} · ${d.kt} kt`);
-  });
+  if(!state.data||!map)return;
+  trkLayer.clearLayers();
+  for(const e of state.data.events.filter(e=>e._tp&&visible(e))){
+    const on=e===state.sel;
+    const P=e._tp.map((q,i)=>({lo:q[0],la:q[1],kt:e.tr[i][3],t:e.tr[i][0]}));
+    for(let i=1;i<P.length;i++){
+      if(Math.abs(P[i].lo-P[i-1].lo)>=180)continue; // skip segments that would wrap around the antimeridian
+      L.polyline([[P[i-1].la,P[i-1].lo],[P[i].la,P[i].lo]],
+        {className:"trk-seg "+cat(Math.max(P[i-1].kt,P[i].kt))+(on?" on":""),weight:on?3.6:2.2,opacity:on?1:.8,interactive:false}
+      ).addTo(trkLayer);
+    }
+    for(const p of P.slice(0,-1)){
+      L.circleMarker([p.la,p.lo],{radius:on?2.6:1.9,className:"trk-pt "+cat(p.kt)+(on?" on":""),weight:on?1.2:.8})
+       .bindTooltip(`${esc(e.n)} · ${fmt.format(new Date(p.t))} · ${p.kt} kt`,{className:"tip-lf",direction:"top"})
+       .addTo(trkLayer);
+    }
+  }
 }
 function intensityChart(e){
   let pts,src,url=null;
@@ -552,18 +565,9 @@ function intensityChart(e){
   ${e.ze&&e.ze.fc?`<p class="fc"><b>Forecast.</b> ${esc(e.ze.fc)}</p>`:""}</div>`;
 }
 function onMark(n){
-  hideTip();
-  if(n.items.length>1){zoomTo(n.items.map(i=>i.e._p),Math.min(14,zt.k*2.2));return}
+  if(n.items.length>1){zoomTo(n.items.map(i=>i.e._p),Math.min(12,map.getZoom()+4));return}
   select(n.items[0].e,true);
 }
-function showTip(n){
-  const t=$("tip"),box=$("mapbox").getBoundingClientRect(),s=box.width/W;
-  if(n.items.length>1){const names=n.items.slice(0,4).map(i=>esc(i.e.n));
-    t.innerHTML=`<b>${n.items.length} events here</b><span>${names.join(" · ")}${n.items.length>4?" …":""}</span>`}
-  else{const e=n.items[0].e;t.innerHTML=`<b>${esc(e.n)}</b><span>${esc(e.m)} · ${esc(e.p)}${e.a?" · "+e.a+" alert":""}</span>`}
-  t.style.left=Math.min(box.width-130,Math.max(130,n.x*s))+"px";t.style.top=(n.y*s)+"px";t.hidden=false;
-}
-function hideTip(){$("tip").hidden=true}
 
 /* ---------- Detail ---------- */
 function detailHTML(e,hid){
@@ -715,8 +719,8 @@ function select(e,fromMap){
     const r=$("sPanel").querySelector("[data-report]");if(r)r.onclick=()=>downloadEventReport(e,r);
   }
   if(!fromMap&&e._tp){zoomTo(e._tp.concat([e._p]));return}
-  if(!fromMap&&e._p){const x=zt.applyX(e._p[0]),y=zt.applyY(e._p[1]);
-    if(zt.k>1.05&&(x<0||x>W||y<0||y>H))svg.transition().duration(reduced.matches?0:500).call(zoom.translateTo,e._p[0],e._p[1]);}
+  if(!fromMap&&e._p){const ll=[e._p[1],e._p[0]];
+    if(map.getZoom()>3&&!map.getBounds().contains(ll))map.panTo(ll,{animate:!reduced.matches});}
 }
 
 /* ---------- Filters ---------- */
@@ -725,7 +729,7 @@ function setFilter(t,c,zoomIt){
   state.type=t;state.cont=c;state.showAll=false;
   try{localStorage.setItem("hw-f",JSON.stringify({t,c}))}catch(_){}
   renderChips();renderMatrix();drawMarks();renderLists();
-  if(zoomIt||contChanged){const ev=state.data.events.filter(visible);zoomTo(c==="all"||c==="ocean"?null:ev.map(e=>e._p))}
+  if(zoomIt||contChanged){const ev=state.data.events.filter(e=>visible(e)&&e._p);zoomTo(c==="all"||c==="ocean"?null:ev.map(e=>e._p))}
 }
 function chip(label,n,pressed,sw,fn){const b=document.createElement("button");b.className="chip";b.type="button";
   b.setAttribute("aria-pressed",pressed);b.innerHTML=(sw?`<span class="sw" style="background:${sw}"></span>`:"")+`<span></span><span class="n">${n}</span>`;
@@ -811,7 +815,8 @@ function renderHead(){
 }
 async function load(){
   try{const r=await fetch("data.json?"+Date.now(),{cache:"no-store"});const d=await r.json();
-    for(const e of d.events){if(!TYPES[e.t])e.t="unrest";e.c=e.c||continent(e.la,e.lo);e._p=proj([e.lo,e.la]);e._tp=e.tr&&e.tr.length>1?e.tr.map(q=>proj([q[2],q[1]])):null}
+    for(const e of d.events){if(!TYPES[e.t])e.t="unrest";e.c=e.c||continent(e.la,e.lo);
+      e._p=(e.la!=null&&e.lo!=null)?[e.lo,e.la]:null;e._tp=e.tr&&e.tr.length>1?e.tr.map(q=>[q[2],q[1]]):null}
     const prev=state.sel;state.data=d;
     state.sel=(prev&&d.events.find(e=>key(e)===key(prev)))||[...d.events].sort((a,b)=>score(b)-score(a))[0];
     renderHead();renderChips();renderMatrix();renderMods();drawMarks();renderLists();renderDetail();
@@ -908,7 +913,7 @@ function showTab(name){
   try{const f=JSON.parse(localStorage.getItem("hw-f")||"{}");if(f.t==="all"||TYPES[f.t])state.type=f.t;if(f.c==="all"||CONTS[f.c])state.cont=f.c}catch(_){}
   // Collapsible panels: remember per viewer; collapsed by default on phones
   let open={};try{open=JSON.parse(localStorage.getItem("hw-open")||"{}")}catch(_){}
-  for(const id of ["secMx","secMods"]){const d=$(id);
+  for(const id of ["secMx","secMods","secTop","secLog"]){const d=$(id);
     d.open=id in open?open[id]:!narrow.matches;
     d.addEventListener("toggle",()=>{open[id]=d.open;try{localStorage.setItem("hw-open",JSON.stringify(open))}catch(_){}})}
   // Sticky offsets
@@ -929,10 +934,10 @@ function showTab(name){
   $("hSort").onchange=e=>{hist.sort=e.target.value;renderHistList()};
   $("scrim").onclick=closeSheet;
   document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!$("sheet").hidden)closeSheet()});
-  addEventListener("resize",()=>{clearTimeout(window._rz);window._rz=setTimeout(drawMarks,150)});
+  new ResizeObserver(()=>{clearTimeout(window._rz);window._rz=setTimeout(()=>{if(map){map.invalidateSize();drawMarks()}},150)}).observe($("mapbox"));
   narrow.addEventListener("change",()=>{if(!narrow.matches&&!$("sheet").hidden&&!$("sPanel").querySelector(".lossbox"))closeSheet();state.data&&renderLists()});
   await drawBase();await Promise.all([load(),loadHistory()]);
-  if(state.cont!=="all"&&state.cont!=="ocean"&&state.data)zoomTo(state.data.events.filter(visible).map(e=>e._p));
+  if(state.cont!=="all"&&state.cont!=="ocean"&&state.data)zoomTo(state.data.events.filter(e=>visible(e)&&e._p).map(e=>e._p));
   setInterval(()=>{load();loadHistory()},10*60*1000);
   setInterval(()=>{if(state.data){$("upd").textContent=ago(state.data.updated);renderLists()}},60*1000);
 })();
