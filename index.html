@@ -142,6 +142,12 @@ select.region{border:1px solid var(--line);background:var(--panel);border-radius
 .zoomctl button+button{border-top:1px solid var(--line)}
 .zoomctl button:hover{background:var(--raise)}
 .zoomctl svg{width:15px;height:15px;cursor:pointer}
+.layerctl{position:absolute;top:10px;left:10px;display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel);box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.layerctl button{border:0;background:none;padding:7px 10px;cursor:pointer;font:500 11px var(--mono);color:var(--muted);white-space:nowrap}
+.layerctl button+button{border-left:1px solid var(--line)}
+.layerctl button:hover{background:var(--raise)}
+.layerctl button[aria-pressed="true"]{background:var(--ink);color:var(--panel)}
+@media (max-width:640px){.layerctl button{padding:6px 7px;font-size:10px}}
 .mapfoot{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;padding:9px 12px;border-top:1px solid var(--line);font:400 10.5px/1.4 var(--mono);color:var(--muted)}
 .mapfoot span{display:inline-flex;align-items:center;gap:5px}
 .mapfoot .hint{margin-left:auto}
@@ -317,6 +323,12 @@ footer{border-top:1px solid var(--line);padding-top:14px;font-size:13px;color:va
       <div class="mapcard">
         <div class="mapbox" id="mapbox">
           <div id="map" aria-label="World map of current hazard events"></div>
+          <div class="layerctl" id="layerctl" role="group" aria-label="Map style">
+            <button type="button" data-layer="auto" aria-pressed="true">Auto</button>
+            <button type="button" data-layer="streets" aria-pressed="false">Streets</button>
+            <button type="button" data-layer="satellite" aria-pressed="false">Satellite</button>
+            <button type="button" data-layer="terrain" aria-pressed="false">Terrain</button>
+          </div>
           <div class="zoomctl">
             <button type="button" id="zin" aria-label="Zoom in">+</button>
             <button type="button" id="zout" aria-label="Zoom out">−</button>
@@ -399,11 +411,42 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const narrow=matchMedia("(max-width: 900px)");
 const reduced=matchMedia("(prefers-reduced-motion: reduce)");
-let map,tileLayer,trkLayer,markLayer,LAND=null;
+let map,tileLayer,labelLayer,trkLayer,markLayer,LAND=null;
 const TILE_LIGHT="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}";
 const TILE_DARK="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}";
+// Alternate basemap "views", all free Esri ArcGIS Online tiles -- no API key required. "auto" (the
+// default) isn't listed here: it just follows the OS light/dark preference via TILE_LIGHT/TILE_DARK.
+const MAP_LAYERS={
+  streets:{url:"https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"},
+  satellite:{url:"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    // pure imagery has no place names printed on it, so pair it with a transparent labels-only overlay
+    labels:"https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"},
+  terrain:{url:"https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}"},
+};
+const ESRI_ATTR='&copy; <a href="https://www.esri.com" target="_blank" rel="noopener">Esri</a>, HERE, Garmin, FAO, NOAA, USGS';
+let mapLayerKey="auto";
+try{mapLayerKey=localStorage.getItem("ghw-maplayer")||"auto";}catch(_){}
 function isDarkMap(){const t=document.documentElement.getAttribute("data-theme");
   if(t==="dark")return true;if(t==="light")return false;return matchMedia("(prefers-color-scheme: dark)").matches}
+function tileUrlFor(k){return k==="auto"||!MAP_LAYERS[k]?(isDarkMap()?TILE_DARK:TILE_LIGHT):MAP_LAYERS[k].url}
+function setMapLayer(k){
+  if(!map)return;
+  mapLayerKey=MAP_LAYERS[k]||k==="auto"?k:"auto";
+  try{localStorage.setItem("ghw-maplayer",mapLayerKey);}catch(_){}
+  tileLayer.setUrl(tileUrlFor(mapLayerKey));
+  const wantLabels=MAP_LAYERS[mapLayerKey]&&MAP_LAYERS[mapLayerKey].labels;
+  if(wantLabels){
+    if(!labelLayer){
+      labelLayer=L.tileLayer(wantLabels,{pane:"labelsPane",maxZoom:19,maxNativeZoom:16});
+    }else{
+      labelLayer.setUrl(wantLabels);
+    }
+    if(!map.hasLayer(labelLayer))labelLayer.addTo(map);
+  }else if(labelLayer&&map.hasLayer(labelLayer)){
+    map.removeLayer(labelLayer);
+  }
+  $("layerctl").querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.layer===mapLayerKey?"true":"false"));
+}
 
 function continent(la,lo){
   if(la<-50||(Math.abs(la)<3&&lo>-35&&lo<-10)||(la>52&&la<66&&lo>-45&&lo<-28))return"ocean";
@@ -433,9 +476,10 @@ const topAlert=arr=>{const r=arr.reduce((m,e)=>Math.max(m,RANK[e.a]||0),0);retur
 async function drawBase(){
   map=L.map("map",{center:[20,8],zoom:2,minZoom:2,maxZoom:12,worldCopyJump:true,
     zoomControl:false,scrollWheelZoom:false,doubleClickZoom:false,attributionControl:true});
-  tileLayer=L.tileLayer(isDarkMap()?TILE_DARK:TILE_LIGHT,{maxZoom:19,maxNativeZoom:16,
-    attribution:'&copy; <a href="https://www.esri.com" target="_blank" rel="noopener">Esri</a>, HERE, Garmin, FAO, NOAA, USGS'
-  }).addTo(map);
+  map.createPane("labelsPane"); // sits above the base tile but below tracks/markers; for satellite's label overlay
+  map.getPane("labelsPane").style.zIndex=350;
+  map.getPane("labelsPane").style.pointerEvents="none";
+  tileLayer=L.tileLayer(tileUrlFor(mapLayerKey),{maxZoom:19,maxNativeZoom:16,attribution:ESRI_ATTR}).addTo(map);
   trkLayer=L.layerGroup().addTo(map);
   markLayer=L.layerGroup().addTo(map);
   map.on("moveend zoomend",drawMarks);
@@ -444,11 +488,13 @@ async function drawBase(){
     ev.preventDefault();
     map.setZoomAround(map.mouseEventToContainerPoint(ev),map.getZoom()+(ev.deltaY<0?1:-1),{animate:false});
   },{passive:false});
-  try{matchMedia("(prefers-color-scheme: dark)").addEventListener("change",()=>tileLayer.setUrl(isDarkMap()?TILE_DARK:TILE_LIGHT));}catch(_){}
+  try{matchMedia("(prefers-color-scheme: dark)").addEventListener("change",()=>{if(mapLayerKey==="auto")tileLayer.setUrl(tileUrlFor("auto"));});}catch(_){}
   try{const w=await (await fetch("land.json")).json();LAND=w;}catch(e){} // used only by the static PDF locator image
   $("zin").onclick=()=>map.zoomIn();
   $("zout").onclick=()=>map.zoomOut();
   $("zfit").onclick=()=>zoomTo(null);
+  $("layerctl").addEventListener("click",ev=>{const b=ev.target.closest("button[data-layer]");if(b)setMapLayer(b.dataset.layer)});
+  setMapLayer(mapLayerKey); // sync button pressed-state and labels overlay to the restored/default choice
   if(matchMedia("(hover: none)").matches)$("hint").textContent="Pinch to zoom · drag to pan · tap a group to open it";
 }
 function zoomTo(pts,maxZoom){
