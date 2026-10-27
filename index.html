@@ -137,12 +137,12 @@ select.region{border:1px solid var(--line);background:var(--panel);border-radius
 .intens .pd{fill:var(--storm);stroke:var(--panel);stroke-width:1.5}
 .intens .fc{font-size:13.5px}
 .intens .k2{font:400 10.5px var(--mono);color:var(--muted)}
-.zoomctl{position:absolute;top:10px;right:10px;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel)}
+.zoomctl{position:absolute;top:10px;right:10px;z-index:1000;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel)}
 .zoomctl button{border:0;background:none;width:34px;height:34px;cursor:pointer;font:500 17px/1 var(--mono);display:grid;place-items:center}
 .zoomctl button+button{border-top:1px solid var(--line)}
 .zoomctl button:hover{background:var(--raise)}
 .zoomctl svg{width:15px;height:15px;cursor:pointer}
-.layerctl{position:absolute;top:10px;left:10px;display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel);box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.layerctl{position:absolute;top:10px;left:10px;z-index:1000;display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel);box-shadow:0 1px 3px rgba(0,0,0,.25)}
 .layerctl button{border:0;background:none;padding:7px 10px;cursor:pointer;font:500 11px var(--mono);color:var(--muted);white-space:nowrap}
 .layerctl button+button{border-left:1px solid var(--line)}
 .layerctl button:hover{background:var(--raise)}
