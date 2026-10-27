@@ -315,15 +315,12 @@ PERIL_WORDS = r"(Super Typhoon|Typhoon|Major Hurricane|Hurricane|Tropical Storm|
 
 
 def known_tokens(events):
-    """Name/place tokens already confirmed by a primary feed (USGS/GDACS/EONET/Zoom Earth),
-    used to sanity-check names picked up by the RMS no-API-key text-scraping fallback below."""
-    toks = set()
-    for e in events:
-        toks.add(e["n"].split()[-1].lower())
-        for w in re.findall(r"[A-Za-z]+", e.get("p") or ""):
-            if len(w) > 3:
-                toks.add(w.lower())
-    return toks
+    """Storm-name tokens already confirmed by a primary feed (GDACS/EONET/Zoom Earth), used to
+    sanity-check names picked up by the RMS no-API-key text-scraping fallback below. Deliberately
+    storm names only, not place names: a place word (e.g. "Guam") showing up in page prose near a
+    peril word doesn't mean the storm is CALLED that, and including place tokens here previously
+    let exactly that kind of false positive ("Typhoon Guam") through."""
+    return {e["n"].split()[-1].lower() for e in events if e["t"] == "storm"}
 
 
 def fetch_rms(known=None):
@@ -387,12 +384,23 @@ def fetch_verisk():
                  "severe-thunderstorm": "severe convective storm", "extratropical-cyclone": "winter storm"}
     out = []
     for url, kind, s, status in links:
+        # Fallback name derived from the URL slug -- only used if the real page title can't be
+        # read. Verisk's own slugs aren't reliable event names: they can carry a stray numeric
+        # suffix ("typhoon-champi2") that isn't part of the storm's actual name, which used to
+        # create a phantom duplicate ("Typhoon Champi2") alongside the real "Typhoon Champi".
         name = re.sub(r"-\d{4}$", "", s).replace("-", " ")
         name = re.sub(r"\bm(\d)\.?(\d)\b", r"M\1.\2", name).title().replace("M7.", "M7.")
         loss, note = None, "Listed on Verisk ALERT"
-        if status != "Closed":
-            try:
-                body = text_of(get(url).text)
+        try:
+            raw = get(url).text
+            h1 = re.search(r"<h1[^>]*>(.*?)</h1>", raw, re.I | re.S)
+            ttl = re.search(r"<title[^>]*>(.*?)</title>", raw, re.I | re.S)
+            real = text_of((h1 or ttl).group(1)) if (h1 or ttl) else ""
+            real = re.split(r"\s+[-|–—]\s+", real)[0].strip()  # drop " - 23 October Update" / " | Verisk ALERT"
+            if real:
+                name = real
+            if status != "Closed":
+                body = text_of(raw)
                 lm = re.search(r"insured (?:industry )?loss(?:es)?[^.]{0,120}?(USD|US\$)\s?[\d.,]+\s*(?:billion|million)"
                                r"(?:\s*(?:and|to|–|-)\s*(?:USD|US\$)?\s?[\d.,]+\s*(?:billion|million))?", body, re.I)
                 if lm:
@@ -402,8 +410,8 @@ def fetch_verisk():
                         loss = f"USD {rng.group(1)}–{rng.group(3)} {rng.group(2)}"
                 sent = re.search(r"([A-Z][^.]{60,260}\.)", body)
                 note = sent.group(1) if sent else note
-            except Exception as ex:  # noqa: BLE001
-                log("verisk page", url, ex)
+        except Exception as ex:  # noqa: BLE001
+            log("verisk page", url, ex)
         out.append(dict(name=name, peril=peril_map.get(kind, "other"), status=status, note=note, url=url, loss=loss,
                         id=None))
     return out
@@ -423,6 +431,14 @@ PERIL_T = {"earthquake": "quake", "tropical cyclone": "storm", "wildfire": "fire
            "civil unrest": "unrest"}
 
 
+def storm_core(name):
+    """The bare storm/place name (last word, e.g. "Champi") stripped of any peril or intensity
+    prefix. A storm's full display name changes as it's upgraded -- "Tropical Cyclone Champi" ->
+    "Typhoon Champi" -> "Super Typhoon Champi" -- so this is the stable identity used to match
+    the SAME storm across feeds and across runs, instead of matching on the full, shifting name."""
+    return (name or "").split()[-1].lower()
+
+
 def attach_modelers(events, org, items, previous):
     """Attach modeler entries to matching events; add unmatched ones as new events."""
     prev_by_name = {e["n"].lower(): e for e in previous}
@@ -430,7 +446,7 @@ def attach_modelers(events, org, items, previous):
         name = (it.get("name") or "").strip()
         if not name:
             continue
-        key = name.split()[-1].lower()  # storm name or country token
+        key = storm_core(name)  # storm name or country token
         mr = dict(o=org, st=it.get("status") or "Active", nt=(it.get("note") or "")[:600], u=it.get("url") or
                   (RMS_URL if org == "Moody's RMS" else VAL_URL), d=(it.get("date") or NOW.date().isoformat())[:10])
         if it.get("id"):
@@ -473,6 +489,8 @@ def attach_modelers(events, org, items, previous):
 def hist_id(e):
     if e.get("uid"):
         return "q-" + e["uid"]
+    if e["t"] == "storm":
+        return f"{e['d'][:4]}-storm-{slug(storm_core(e['n']))}"
     return f"{e['d'][:4]}-{slug(e['n'])}"
 
 
@@ -503,6 +521,13 @@ def merge_history(hist, events):
                            and re.match(r"M(\d\.\d)", x["m"]) and float(re.match(r"M(\d\.\d)", x["m"]).group(1)) > mag), None)
             if parent:
                 continue
+        if not h and e["t"] == "storm":
+            # Same storm archived earlier this year under different wording (its name's peril/
+            # intensity prefix changes as it strengthens: Tropical Cyclone -> Typhoon -> Super
+            # Typhoon), so a plain id/name match would miss it and fork a duplicate record.
+            core = storm_core(e["n"])
+            h = next((x for x in hist["events"] if x["t"] == "storm" and x["d"][:4] == e["d"][:4]
+                      and storm_core(x["n"]) == core and len(core) > 2), None)
         if not h:
             h = dict(id=hist_id(e), t=e["t"], n=e["n"], p=e["p"], d=e["d"], d2=None, la=e["la"], lo=e["lo"], m=e["m"],
                      a=e.get("a"), sum=e.get("x", ""), deaths=None, econ=[dict(v="Not published", by="—", u=None)],
